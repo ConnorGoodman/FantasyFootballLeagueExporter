@@ -98,6 +98,23 @@ docker compose run --rm sleeper-export set-team /export --user-id SLEEPER_USER_I
 
 For automation, schedule `docker compose run --rm sleeper-export` from this repository. Commit and push the mounted export folder in the job after a successful export.
 
+### Publish the image automatically
+
+The included GitHub Actions workflow builds the image on pull requests and publishes it to GitHub Container Registry when `main` or a version tag is pushed:
+
+```text
+ghcr.io/connorgoodman/sleeperleagueexporter:latest
+```
+
+The package inherits the repository's visibility. For a private package, authenticate before pulling:
+
+```bash
+echo "$CR_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+docker pull ghcr.io/connorgoodman/sleeperleagueexporter:latest
+```
+
+The first package publish may require enabling **Actions** to write packages in the repository settings. A version tag such as `v0.1.0` also publishes a matching image tag.
+
 ## API coverage
 
 The exporter fetches league metadata, users, rosters, sport state, the sport player catalog, traded picks, winners and losers brackets, every requested matchup week, every requested transaction round, drafts, and draft picks. Raw responses remain JSON so future normalizers or agents can use fields not yet represented in Markdown. The player catalog can be several megabytes, but makes the repository self-contained for offline analysis.
