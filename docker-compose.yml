@@ -1,7 +1,7 @@
 services:
-  sleeper-export:
+  fantasy-export:
     build: .
-    command: ["export", "${SLEEPER_LEAGUE_ID}", "/export", "--weeks", "${SLEEPER_WEEKS:-18}"]
+    command: ["export", "${FANTASY_LEAGUE_ID:-${SLEEPER_LEAGUE_ID}}", "/export", "--provider", "${FANTASY_PROVIDER:-sleeper}", "--weeks", "${FANTASY_WEEKS:-${SLEEPER_WEEKS:-18}}"]
     volumes:
-      - "${SLEEPER_EXPORT_FOLDER:-./league-export}:/export"
+      - "${FANTASY_EXPORT_FOLDER:-${SLEEPER_EXPORT_FOLDER:-./league-export}}:/export"
     restart: "no"

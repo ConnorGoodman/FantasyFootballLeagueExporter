@@ -1,0 +1,23 @@
+{
+	"leagues": [
+		{
+			"name": "sleeper-league",
+			"provider": "sleeper",
+			"league_id": "YOUR_SLEEPER_LEAGUE_ID",
+			"folder": "exports/sleeper",
+			"my_team_user_id": "YOUR_SLEEPER_USER_ID",
+			"my_team_label": "My Sleeper Team",
+			"weeks": 18
+		},
+		{
+			"name": "espn-league",
+			"provider": "espn",
+			"league_id": "YOUR_ESPN_LEAGUE_ID",
+			"season": "2026",
+			"folder": "exports/espn",
+			"my_team_user_id": "YOUR_ESPN_TEAM_ID",
+			"my_team_label": "My ESPN Team",
+			"weeks": 18
+		}
+	]
+}

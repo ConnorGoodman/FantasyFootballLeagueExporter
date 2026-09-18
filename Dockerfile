@@ -5,4 +5,4 @@ COPY pyproject.toml .
 COPY sleeper_exporter ./sleeper_exporter
 RUN pip install --no-cache-dir .
 
-ENTRYPOINT ["sleeper-export"]
+ENTRYPOINT ["fantasy-export"]

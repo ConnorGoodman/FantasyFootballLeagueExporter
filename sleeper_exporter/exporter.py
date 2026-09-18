@@ -1,43 +1,30 @@
 from __future__ import annotations
 
 import json
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from . import __version__
+from .providers.sleeper import SleeperApiError, SleeperClient, SleeperProvider
 
 
-class SleeperApiError(RuntimeError):
-    pass
+class FantasyExporter:
+    def __init__(self, provider):
+        self.provider = provider
 
+    @property
+    def errors(self):
+        return self.provider.errors
 
-class SleeperClient:
-    def __init__(self, base_url: str, timeout: int = 30):
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self.endpoints: list[str] = []
+    @property
+    def client(self):
+        return getattr(self.provider, "client", self.provider)
 
-    def get(self, path: str):
-        normalized = "/" + path.lstrip("/")
-        self.endpoints.append(normalized)
-        request = Request(self.base_url + normalized, headers={"User-Agent": "sleeper-league-exporter/0.1"})
-        for attempt in range(3):
-            try:
-                with urlopen(request, timeout=self.timeout) as response:
-                    return json.loads(response.read().decode("utf-8"))
-            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-                if attempt == 2:
-                    raise SleeperApiError(f"GET {normalized}: {exc}") from exc
-                time.sleep(0.5 * (attempt + 1))
-
-
-class SleeperExporter:
-    def __init__(self, base_url: str = "https://api.sleeper.app/v1"):
-        self.client = SleeperClient(base_url)
-        self.errors: list[dict[str, str]] = []
+    @client.setter
+    def client(self, value):
+        if not isinstance(self.provider, SleeperProvider):
+            raise AttributeError("client replacement is only supported for the Sleeper provider")
+        self.provider.client = value
 
     def _optional(self, path: str, default):
         try:
@@ -57,9 +44,9 @@ class SleeperExporter:
     ) -> dict:
         started = datetime.now(timezone.utc)
         output_dir.mkdir(parents=True, exist_ok=True)
-        league = self.client.get(f"/league/{league_id}")
-        users = self.client.get(f"/league/{league_id}/users")
-        rosters = self.client.get(f"/league/{league_id}/rosters")
+        data = self.provider.fetch(league_id, weeks)
+        league = data["league"]
+        users = data["users"]
         requested_team_id = my_team_user_id
         if my_team_user_id:
             for user in users:
@@ -70,41 +57,7 @@ class SleeperExporter:
                 }:
                     my_team_user_id = user.get("user_id")
                     break
-        settings = league.get("settings", {})
-        total_weeks = weeks or max(int(settings.get("playoff_week_start", 15)) + 3, 18)
-
-        data: dict = {
-            "league": league,
-            "users": users,
-            "rosters": rosters,
-            "state": self._optional(f"/state/{league.get('sport', 'nfl')}", {}),
-            "players": self._optional(f"/players/{league.get('sport', 'nfl')}", {}),
-            "traded_picks": self._optional(f"/league/{league_id}/traded_picks", []),
-            "winners_bracket": self._optional(f"/league/{league_id}/winners_bracket", []),
-            "losers_bracket": self._optional(f"/league/{league_id}/losers_bracket", []),
-            "matchups": {},
-            "transactions": {},
-            "stats": {},
-            "projections": {},
-            "drafts": [],
-        }
-        sport = league.get("sport", "nfl")
-        season = league.get("season")
-        for week in range(1, total_weeks + 1):
-            data["matchups"][str(week)] = self._optional(f"/league/{league_id}/matchups/{week}", [])
-            if season:
-                data["stats"][str(week)] = self._optional(f"/stats/{sport}/{season}/{week}", {})
-                data["projections"][str(week)] = self._optional(
-                    f"/projections/{sport}/{season}/{week}", {}
-                )
-        for round_number in range(1, total_weeks + 1):
-            data["transactions"][str(round_number)] = self._optional(
-                f"/league/{league_id}/transactions/{round_number}", []
-            )
-        for draft in self._optional(f"/league/{league_id}/drafts", []):
-            draft_id = draft.get("draft_id")
-            draft["picks"] = self._optional(f"/draft/{draft_id}/picks", []) if draft_id else []
-            data["drafts"].append(draft)
+        total_weeks = data.get("weeks") or weeks or 18
 
         self._write_data(output_dir, data)
         context = self._decision_context(data, my_team_user_id, my_team_label, total_weeks, enrichment)
@@ -124,8 +77,9 @@ class SleeperExporter:
             "league_name": league.get("name", league_id),
             "fetched_at": started.isoformat(),
             "completed_at": datetime.now(timezone.utc).isoformat(),
-            "api_base_url": self.client.base_url,
-            "endpoints_requested": self.client.endpoints,
+            "provider": self.provider.name,
+            "api_base_url": self.provider.base_url,
+            "endpoints_requested": self.provider.endpoints,
             "errors": self.errors,
             "requested_my_team": requested_team_id,
             "my_team_user_id": my_team_user_id,
@@ -145,6 +99,7 @@ class SleeperExporter:
         rosters = data["rosters"]
         users = {user.get("user_id"): user for user in data["users"] if user.get("user_id")}
         players = data.get("players") or {}
+        provider_label = (data.get("provider") or "fantasy").title()
         rostered_ids = {player_id for roster in rosters for player_id in roster.get("players") or []}
         teams = []
         for roster in sorted(rosters, key=lambda item: item.get("roster_id", 0)):
@@ -155,7 +110,7 @@ class SleeperExporter:
             player_details = [
                 {
                     "player_id": player_id,
-                    "full_name": SleeperExporter._display_player_name(player_id, players.get(player_id) or {}),
+                    "full_name": FantasyExporter._display_player_name(player_id, players.get(player_id) or {}),
                     "position": (players.get(player_id) or {}).get("position"),
                     "team": (players.get(player_id) or {}).get("team"),
                     "status": (players.get(player_id) or {}).get("status"),
@@ -214,6 +169,7 @@ class SleeperExporter:
             "snapshot": {
                 "league_id": league.get("league_id"),
                 "sport": league.get("sport"),
+                "provider": data.get("provider"),
                 "season": league.get("season"),
                 "current_week": (data.get("state") or {}).get("week"),
                 "weeks_exported": total_weeks,
@@ -237,8 +193,8 @@ class SleeperExporter:
             "drafts": data.get("drafts", []),
             "external_enrichment": enrichment,
             "enrichment": {
-                "injuries_and_player_metadata": "Sleeper player catalog",
-                "stats_and_projections": "Sleeper optional endpoints",
+                "injuries_and_player_metadata": f"{provider_label} player catalog",
+                "stats_and_projections": f"{provider_label} optional endpoints",
                 "schedule_news_rankings": "provided by --enrichment-file when available",
             },
         }
@@ -246,6 +202,7 @@ class SleeperExporter:
     @staticmethod
     def _context_markdown(context: dict) -> str:
         snapshot = context["snapshot"]
+        provider_label = (snapshot.get("provider") or "fantasy").title()
         lines = [
             "# Decision Context",
             "",
@@ -281,13 +238,13 @@ class SleeperExporter:
                 detail = ", ".join(filter(None, [player.get("injury_status"), player.get("injury_body_part"), player.get("injury_notes")]))
                 lines.append(f"- {player.get('full_name') or player.get('player_id')}: {detail or player.get('status')}")
         else:
-            lines.append("- None reported by Sleeper.")
+            lines.append(f"- None reported by {provider_label}.")
         lines += ["", "## Available Players", "", f"- Catalog entries available: {len(context['available_players'])}", ""]
         lines += [
             "## Data Notes",
             "",
             "- Raw responses are in `../data/`.",
-            "- Weekly stats and projections may be empty when Sleeper does not provide them for the sport or week.",
+            f"- Weekly stats and projections may be empty when {provider_label} does not provide them for the sport or week.",
             "- Schedule, news, rankings, and betting data require a separate enrichment source.",
             "",
         ]
@@ -312,7 +269,8 @@ class SleeperExporter:
             if isinstance(player, dict)
         }
         league = data["league"]
-        lines = [f"# {league.get('name', 'Sleeper League')}", "", "## Snapshot", "", f"- League ID: `{league.get('league_id')}`", f"- Sport: {league.get('sport')}", f"- Season: {league.get('season')}", f"- Status: {league.get('status')}", f"- Exported: {started.isoformat()}", "- Raw source: `../data/`", ""]
+        provider_label = (data.get("provider") or "fantasy").title()
+        lines = [f"# {league.get('name', f'{provider_label} League')}", "", "## Snapshot", "", f"- Provider: {provider_label}", f"- League ID: `{league.get('league_id')}`", f"- Sport: {league.get('sport')}", f"- Season: {league.get('season')}", f"- Status: {league.get('status')}", f"- Exported: {started.isoformat()}", "- Raw source: `../data/`", ""]
         lines += ["## Your Team", "", f"- User ID: `{my_id or 'not configured'}`", f"- Label: {label or 'not configured'}", "", "## Teams", ""]
         for roster in sorted(data["rosters"], key=lambda item: item.get("roster_id", 0)):
             owner_id = roster.get("owner_id")
@@ -330,7 +288,7 @@ class SleeperExporter:
             team_lines.extend(self._player_line(player, player_id) for player_id, player in zip(roster_player_ids, roster_players))
             self._write_text(teams_dir / f"roster-{team_slug}.md", "\n".join(team_lines) + "\n")
         self._write_text(ai_dir / "README.md", "\n".join(lines) + "\n")
-        availability = ["# Player Availability", "", "Statuses and injury details from Sleeper at export time.", ""]
+        availability = ["# Player Availability", "", f"Statuses and injury details from {provider_label} at export time.", ""]
         for player_id, player in sorted(players.items(), key=lambda item: (item[1].get("full_name") or "").lower()):
             if player.get("injury_status") or player.get("injury_notes") or player.get("status") not in (None, "Active"):
                 availability.append(self._player_line(player, player_id))
@@ -358,7 +316,7 @@ class SleeperExporter:
             details.append(f"body: {player['injury_body_part']}")
         if player.get("injury_notes"):
             details.append(f"notes: {player['injury_notes']}")
-        return f"- **{SleeperExporter._display_player_name(player_id, player)}** ({'; '.join(details)})"
+        return f"- **{FantasyExporter._display_player_name(player_id, player)}** ({'; '.join(details)})"
 
     @staticmethod
     def _transactions_markdown(transactions: dict) -> str:
@@ -390,3 +348,10 @@ class SleeperExporter:
     @staticmethod
     def _write_text(path: Path, value: str) -> None:
         path.write_text(value, encoding="utf-8")
+
+
+class SleeperExporter(FantasyExporter):
+    """Backward-compatible entry point for existing Sleeper integrations."""
+
+    def __init__(self, base_url: str = "https://api.sleeper.app/v1"):
+        super().__init__(SleeperProvider(base_url))

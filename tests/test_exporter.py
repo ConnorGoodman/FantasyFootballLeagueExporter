@@ -1,9 +1,13 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from sleeper_exporter import cli
 from sleeper_exporter.exporter import SleeperExporter
+from sleeper_exporter.providers.espn import EspnProvider
 
 
 class FakeClient:
@@ -32,6 +36,21 @@ class FakeClient:
 
 
 class ExporterTests(unittest.TestCase):
+    def test_export_all_dispatches_every_configured_league(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_folder = Path(temp_dir)
+            (config_folder / ".fantasy-export.json").write_text(json.dumps({
+                "leagues": [
+                    {"name": "sleeper-home", "provider": "sleeper", "league_id": "S1", "folder": "sleeper"},
+                    {"name": "espn-work", "provider": "espn", "league_id": "E1", "season": "2026", "folder": "espn"},
+                ]
+            }), encoding="utf-8")
+            with patch.object(sys, "argv", ["fantasy-export", "export-all", str(config_folder)]), patch.object(
+                cli, "_export_entry", return_value={"league_name": "Test", "errors": []}
+            ) as export_entry:
+                cli.main()
+            self.assertEqual([call.args[0]["name"] for call in export_entry.call_args_list], ["sleeper-home", "espn-work"])
+
     def test_export_writes_raw_and_ai_files_and_marks_team(self):
         exporter = SleeperExporter()
         exporter.client = FakeClient()
@@ -54,6 +73,28 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(len(list((root / "history").glob("decision_context-*.json"))), 1)
             sync = json.loads((root / "data" / "sync.json").read_text())
             self.assertEqual(sync["my_team_user_id"], "U1")
+
+    def test_espn_provider_normalizes_core_snapshot_fields(self):
+        raw = {
+            "settings": {"name": "ESPN Test League"},
+            "members": [{"id": "M1", "displayName": "Alex"}],
+            "teams": [{
+                "id": 1,
+                "name": "The Tests",
+                "owners": ["M1"],
+                "record": {"overall": {"wins": 2, "losses": 1, "ties": 0, "pointsFor": 250}},
+                "roster": {"entries": [{"playerPoolEntry": {"id": 101}}]},
+            }],
+            "players": [{"player": {"id": 101, "fullName": "Test Player", "proTeamId": 10}}],
+            "schedule": [{"matchupPeriodId": 1, "home": {"teamId": 1}}],
+        }
+        provider = EspnProvider("2026")
+        data = provider._normalize("L1", raw, weeks=1)
+        self.assertEqual(data["provider"], "espn")
+        self.assertEqual(data["league"]["name"], "ESPN Test League")
+        self.assertEqual(data["rosters"][0]["owner_id"], "M1")
+        self.assertEqual(data["players"]["101"]["full_name"], "Test Player")
+        self.assertEqual(len(data["matchups"]["1"]), 1)
 
 
 if __name__ == "__main__":
