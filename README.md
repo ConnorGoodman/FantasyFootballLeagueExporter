@@ -76,6 +76,7 @@ my-league/
     teams/                   # one short file per roster
     weeks/                   # matchup tables by week
     transactions.md drafts.md
+  history/                   # timestamped normalized contexts from prior exports
 ```
 
 Optional endpoints are recorded as errors in `data/sync.json` instead of preventing the rest of the snapshot from being written. This is useful for leagues that do not use a draft or postseason bracket.
@@ -128,3 +129,5 @@ sleeper-export export LEAGUE_ID ./my-league --weeks 18 --enrichment-file .\enric
 ```
 
 The enrichment object is copied to `external_enrichment` in the decision context, preserving provider-specific fields without imposing a schema.
+
+Each export also writes a timestamped normalized context under `history/`. This preserves changes in rosters, records, player status, stats, projections, and external enrichment so an agent can identify trends across exports.

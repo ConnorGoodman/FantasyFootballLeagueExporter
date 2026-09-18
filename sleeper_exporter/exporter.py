@@ -112,6 +112,12 @@ class SleeperExporter:
         self._write_ai(output_dir, data, my_team_user_id, my_team_label, started)
         self._write_json(output_dir / "ai" / "context.json", context)
         self._write_text(output_dir / "ai" / "context.md", self._context_markdown(context))
+        history_dir = output_dir / "history"
+        history_dir.mkdir(exist_ok=True)
+        self._write_json(
+            history_dir / f"decision_context-{started.strftime('%Y%m%dT%H%M%SZ')}.json",
+            context,
+        )
         sync = {
             "exporter_version": __version__,
             "league_id": league_id,

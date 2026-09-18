@@ -43,6 +43,7 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(context["my_team"]["user_id"], "U1")
             self.assertEqual(context["teams"][0]["record"]["wins"], 1)
             self.assertTrue((root / "ai" / "context.md").exists())
+            self.assertEqual(len(list((root / "history").glob("decision_context-*.json"))), 1)
             sync = json.loads((root / "data" / "sync.json").read_text())
             self.assertEqual(sync["my_team_user_id"], "U1")
 
