@@ -1,0 +1,8 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY pyproject.toml .
+COPY sleeper_exporter ./sleeper_exporter
+RUN pip install --no-cache-dir .
+
+ENTRYPOINT ["sleeper-export"]

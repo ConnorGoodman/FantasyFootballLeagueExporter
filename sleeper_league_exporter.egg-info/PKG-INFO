@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: sleeper-league-exporter
+Version: 0.1.0
+Summary: Export a Sleeper league into a git-friendly, AI-readable snapshot
+Requires-Python: >=3.11

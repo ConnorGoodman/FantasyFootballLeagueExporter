@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sleeper-league-exporter"
+version = "0.1.0"
+description = "Export a Sleeper league into a git-friendly, AI-readable snapshot"
+requires-python = ">=3.11"
+
+[project.scripts]
+sleeper-export = "sleeper_exporter.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["sleeper_exporter*"]

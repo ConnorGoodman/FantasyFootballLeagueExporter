@@ -1,0 +1,2 @@
+[console_scripts]
+sleeper-export = sleeper_exporter.cli:main

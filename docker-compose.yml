@@ -1,0 +1,7 @@
+services:
+  sleeper-export:
+    build: .
+    command: ["export", "${SLEEPER_LEAGUE_ID}", "/export", "--weeks", "${SLEEPER_WEEKS:-18}"]
+    volumes:
+      - "${SLEEPER_EXPORT_FOLDER:-./league-export}:/export"
+    restart: "no"
