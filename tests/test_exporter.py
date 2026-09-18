@@ -20,6 +20,10 @@ class FakeClient:
             return [{"user_id": "U1", "display_name": "Alex", "metadata": {"team_name": "The Tests"}}]
         if path == "/league/L1/rosters":
             return [{"roster_id": 1, "owner_id": "U1", "players": ["P1"], "settings": {"wins": 1, "losses": 0, "fpts": 100}}]
+        if path == "/state/nfl":
+            return {}
+        if path == "/players/nfl":
+            return {"P1": {"full_name": "Test Player", "team": "TST", "status": "Inactive", "injury_status": "IR", "injury_body_part": "Ankle", "injury_notes": "Sprain"}}
         if path == "/league/L1/drafts":
             return []
         if "/matchups/" in path or "/transactions/" in path:
@@ -38,6 +42,8 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "data" / "league.json").read_text())["league_id"], "L1")
             overview = (root / "ai" / "README.md").read_text()
             self.assertIn("(YOUR TEAM)", overview)
+            self.assertIn("Test Player", (root / "ai" / "players.md").read_text())
+            self.assertIn("injury: IR", (root / "ai" / "teams" / "roster-1.md").read_text())
             self.assertTrue((root / "ai" / "weeks" / "week-01.md").exists())
             context = json.loads((root / "data" / "decision_context.json").read_text())
             self.assertEqual(context["my_team"]["user_id"], "U1")

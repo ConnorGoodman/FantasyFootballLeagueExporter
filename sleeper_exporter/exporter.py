@@ -151,6 +151,21 @@ class SleeperExporter:
             owner_id = roster.get("owner_id")
             user = users.get(owner_id, {})
             settings = roster.get("settings") or {}
+            player_ids = roster.get("players") or []
+            player_details = [
+                {
+                    "player_id": player_id,
+                    "full_name": (players.get(player_id) or {}).get("full_name") or player_id,
+                    "position": (players.get(player_id) or {}).get("position"),
+                    "team": (players.get(player_id) or {}).get("team"),
+                    "status": (players.get(player_id) or {}).get("status"),
+                    "injury_status": (players.get(player_id) or {}).get("injury_status"),
+                    "injury_body_part": (players.get(player_id) or {}).get("injury_body_part"),
+                    "injury_notes": (players.get(player_id) or {}).get("injury_notes"),
+                    "news_updated": (players.get(player_id) or {}).get("news_updated"),
+                }
+                for player_id in player_ids
+            ]
             teams.append(
                 {
                     "roster_id": roster.get("roster_id"),
@@ -165,7 +180,9 @@ class SleeperExporter:
                         "points_for": settings.get("fpts", 0),
                         "points_against": settings.get("fpts_against", 0),
                     },
-                    "players": roster.get("players") or [],
+                    "players": player_ids,
+                    "player_details": player_details,
+                    "starters": roster.get("starters") or [],
                     "taxi": roster.get("taxi") or [],
                     "reserve": roster.get("reserve") or [],
                 }
@@ -181,6 +198,10 @@ class SleeperExporter:
                 "team": player.get("team"),
                 "status": player.get("status"),
                 "injury_status": player.get("injury_status"),
+                "injury_body_part": player.get("injury_body_part"),
+                "injury_notes": player.get("injury_notes"),
+                "news_updated": player.get("news_updated"),
+                "active": player.get("active"),
                 "depth_chart_order": player.get("depth_chart_order"),
                 "years_exp": player.get("years_exp"),
                 "age": player.get("age"),
@@ -203,6 +224,10 @@ class SleeperExporter:
             "teams": teams,
             "players": player_status,
             "available_players": available_players,
+            "injury_alerts": [
+                player for player in player_status.values()
+                if player.get("injury_status") or player.get("injury_notes")
+            ],
             "weekly_stats": data.get("stats", {}),
             "weekly_projections": data.get("projections", {}),
             "transactions": data.get("transactions", {}),
@@ -238,6 +263,24 @@ class SleeperExporter:
                 f"{record['wins']}-{record['losses']}-{record['ties']}, {record['points_for']} points; "
                 f"{len(team['players'])} players"
             )
+        my_team = next((team for team in context["teams"] if team["is_my_team"]), None)
+        lines += ["", "## My Team Lineup", ""]
+        if my_team:
+            starter_ids = set(my_team.get("starters") or [])
+            for player in my_team.get("player_details", []):
+                bucket = "starter" if player["player_id"] in starter_ids else "roster"
+                availability = player.get("injury_status") or player.get("status") or "no status"
+                lines.append(f"- {player['full_name']} ({bucket}; {availability})")
+        else:
+            lines.append("- No team is configured.")
+        lines += ["", "## Injury Alerts", ""]
+        alerts = context.get("injury_alerts", [])
+        if alerts:
+            for player in alerts:
+                detail = ", ".join(filter(None, [player.get("injury_status"), player.get("injury_body_part"), player.get("injury_notes")]))
+                lines.append(f"- {player.get('full_name') or player.get('player_id')}: {detail or player.get('status')}")
+        else:
+            lines.append("- None reported by Sleeper.")
         lines += ["", "## Available Players", "", f"- Catalog entries available: {len(context['available_players'])}", ""]
         lines += [
             "## Data Notes",
@@ -262,6 +305,11 @@ class SleeperExporter:
         teams_dir.mkdir(parents=True, exist_ok=True)
         weeks_dir.mkdir(parents=True, exist_ok=True)
         users = {user.get("user_id"): user for user in data["users"] if user.get("user_id")}
+        players = {
+            player_id: player
+            for player_id, player in (data.get("players") or {}).items()
+            if isinstance(player, dict)
+        }
         league = data["league"]
         lines = [f"# {league.get('name', 'Sleeper League')}", "", "## Snapshot", "", f"- League ID: `{league.get('league_id')}`", f"- Sport: {league.get('sport')}", f"- Season: {league.get('season')}", f"- Status: {league.get('status')}", f"- Exported: {started.isoformat()}", "- Raw source: `../data/`", ""]
         lines += ["## Your Team", "", f"- User ID: `{my_id or 'not configured'}`", f"- Label: {label or 'not configured'}", "", "## Teams", ""]
@@ -273,10 +321,18 @@ class SleeperExporter:
             marker = " (YOUR TEAM)" if owner_id == my_id else ""
             lines.append(f"- Roster {roster.get('roster_id')}: **{name}**{marker} ({owner_id})")
             lines.append(f"  - Record: {roster.get('settings', {}).get('wins', 0)}-{roster.get('settings', {}).get('losses', 0)}; points: {roster.get('settings', {}).get('fpts', 0)}")
-            lines.append(f"  - Players: {', '.join(roster.get('players') or []) or 'none'}")
+            roster_players = [players.get(player_id, {"full_name": player_id}) for player_id in roster.get("players") or []]
+            lines.append(f"  - Players: {', '.join(player.get('full_name') or 'Unknown' for player in roster_players) or 'none'}")
             team_slug = str(roster.get("roster_id", "unknown"))
-            self._write_text(teams_dir / f"roster-{team_slug}.md", "\n".join(lines[-3:]) + "\n")
+            team_lines = lines[-3:] + ["", "### Player availability"]
+            team_lines.extend(self._player_line(player, player_id) for player_id, player in zip(roster.get("players") or [], roster_players))
+            self._write_text(teams_dir / f"roster-{team_slug}.md", "\n".join(team_lines) + "\n")
         self._write_text(ai_dir / "README.md", "\n".join(lines) + "\n")
+        availability = ["# Player Availability", "", "Statuses and injury details from Sleeper at export time.", ""]
+        for player_id, player in sorted(players.items(), key=lambda item: (item[1].get("full_name") or "").lower()):
+            if player.get("injury_status") or player.get("injury_notes") or player.get("status") not in (None, "Active"):
+                availability.append(self._player_line(player, player_id))
+        self._write_text(ai_dir / "players.md", "\n".join(availability) + "\n")
         for week, matchups in data["matchups"].items():
             text = [f"# Week {week}", "", "| Matchup ID | Roster | Points | Players |", "| --- | ---: | ---: | --- |"]
             for matchup in matchups:
@@ -284,6 +340,19 @@ class SleeperExporter:
             self._write_text(weeks_dir / f"week-{int(week):02d}.md", "\n".join(text) + "\n")
         self._write_text(ai_dir / "transactions.md", self._transactions_markdown(data["transactions"]))
         self._write_text(ai_dir / "drafts.md", self._drafts_markdown(data["drafts"]))
+
+    @staticmethod
+    def _player_line(player: dict, player_id: str) -> str:
+        details = [f"`{player_id}`", player.get("team") or "FA"]
+        if player.get("status"):
+            details.append(f"status: {player['status']}")
+        if player.get("injury_status"):
+            details.append(f"injury: {player['injury_status']}")
+        if player.get("injury_body_part"):
+            details.append(f"body: {player['injury_body_part']}")
+        if player.get("injury_notes"):
+            details.append(f"notes: {player['injury_notes']}")
+        return f"- **{player.get('full_name') or player_id}** ({'; '.join(details)})"
 
     @staticmethod
     def _transactions_markdown(transactions: dict) -> str:

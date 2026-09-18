@@ -74,6 +74,7 @@ my-league/
     README.md                # league overview and team index
     context.json context.md  # compact decision-oriented context
     teams/                   # one short file per roster
+    players.md               # player statuses and injury details
     weeks/                   # matchup tables by week
     transactions.md drafts.md
   history/                   # timestamped normalized contexts from prior exports
