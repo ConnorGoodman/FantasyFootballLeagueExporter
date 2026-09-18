@@ -69,8 +69,10 @@ my-league/
     matchups.json transactions.json drafts.json
     traded_picks.json winners_bracket.json losers_bracket.json
     sync.json                # timestamps, endpoints, and optional errors
+    decision_context.json    # normalized inputs for lineup, waiver, and trade decisions
   ai/
     README.md                # league overview and team index
+    context.json context.md  # compact decision-oriented context
     teams/                   # one short file per roster
     weeks/                   # matchup tables by week
     transactions.md drafts.md
@@ -99,3 +101,13 @@ For automation, schedule `docker compose run --rm sleeper-export` from this repo
 ## API coverage
 
 The exporter fetches league metadata, users, rosters, sport state, the sport player catalog, traded picks, winners and losers brackets, every requested matchup week, every requested transaction round, drafts, and draft picks. Raw responses remain JSON so future normalizers or agents can use fields not yet represented in Markdown. The player catalog can be several megabytes, but makes the repository self-contained for offline analysis.
+
+It also requests weekly player stats and projections when Sleeper provides them. Those endpoints are optional and are recorded in `data/sync.json` if unavailable. The normalized `data/decision_context.json` includes roster settings, team records, rostered and available players, player status metadata, matchups, transactions, drafts, picks, stats, and projections.
+
+External schedule, news, rankings, or provider-specific projections can be supplied as a JSON object:
+
+```powershell
+sleeper-export export LEAGUE_ID ./my-league --weeks 18 --enrichment-file .\enrichment.json
+```
+
+The enrichment object is copied to `external_enrichment` in the decision context, preserving provider-specific fields without imposing a schema.

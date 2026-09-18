@@ -39,6 +39,10 @@ class ExporterTests(unittest.TestCase):
             overview = (root / "ai" / "README.md").read_text()
             self.assertIn("(YOUR TEAM)", overview)
             self.assertTrue((root / "ai" / "weeks" / "week-01.md").exists())
+            context = json.loads((root / "data" / "decision_context.json").read_text())
+            self.assertEqual(context["my_team"]["user_id"], "U1")
+            self.assertEqual(context["teams"][0]["record"]["wins"], 1)
+            self.assertTrue((root / "ai" / "context.md").exists())
             sync = json.loads((root / "data" / "sync.json").read_text())
             self.assertEqual(sync["my_team_user_id"], "U1")
 

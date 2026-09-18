@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--my-team-user-id", help="Override the configured team owner")
     export.add_argument("--weeks", type=int, help="Number of regular/playoff weeks to fetch")
     export.add_argument("--base-url", default="https://api.sleeper.app/v1")
+    export.add_argument(
+        "--enrichment-file",
+        type=Path,
+        help="JSON file containing external schedule, news, rankings, or projection data",
+    )
 
     team = commands.add_parser("set-team", help="Set the team marked as yours")
     team.add_argument("folder", type=Path)
@@ -60,6 +65,14 @@ def main() -> None:
 
     config = _load_config(args.folder)
     user_id = args.my_team_user_id or config.get("my_team_user_id")
+    enrichment = {}
+    if args.enrichment_file:
+        try:
+            enrichment = json.loads(args.enrichment_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit(f"Invalid enrichment file {args.enrichment_file}: {exc}") from exc
+        if not isinstance(enrichment, dict):
+            raise SystemExit(f"Enrichment file {args.enrichment_file} must contain a JSON object")
     exporter = SleeperExporter(args.base_url)
     try:
         result = exporter.export(
@@ -68,6 +81,7 @@ def main() -> None:
             my_team_user_id=user_id,
             my_team_label=config.get("my_team_label"),
             weeks=args.weeks,
+            enrichment=enrichment,
         )
     except Exception as exc:
         print(f"Export failed: {exc}", file=sys.stderr)

@@ -53,6 +53,7 @@ class SleeperExporter:
         my_team_user_id: str | None = None,
         my_team_label: str | None = None,
         weeks: int | None = None,
+        enrichment: dict | None = None,
     ) -> dict:
         started = datetime.now(timezone.utc)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -83,10 +84,19 @@ class SleeperExporter:
             "losers_bracket": self._optional(f"/league/{league_id}/losers_bracket", []),
             "matchups": {},
             "transactions": {},
+            "stats": {},
+            "projections": {},
             "drafts": [],
         }
+        sport = league.get("sport", "nfl")
+        season = league.get("season")
         for week in range(1, total_weeks + 1):
             data["matchups"][str(week)] = self._optional(f"/league/{league_id}/matchups/{week}", [])
+            if season:
+                data["stats"][str(week)] = self._optional(f"/stats/{sport}/{season}/{week}", {})
+                data["projections"][str(week)] = self._optional(
+                    f"/projections/{sport}/{season}/{week}", {}
+                )
         for round_number in range(1, total_weeks + 1):
             data["transactions"][str(round_number)] = self._optional(
                 f"/league/{league_id}/transactions/{round_number}", []
@@ -97,7 +107,11 @@ class SleeperExporter:
             data["drafts"].append(draft)
 
         self._write_data(output_dir, data)
+        context = self._decision_context(data, my_team_user_id, my_team_label, total_weeks, enrichment)
+        self._write_json(output_dir / "data" / "decision_context.json", context)
         self._write_ai(output_dir, data, my_team_user_id, my_team_label, started)
+        self._write_json(output_dir / "ai" / "context.json", context)
+        self._write_text(output_dir / "ai" / "context.md", self._context_markdown(context))
         sync = {
             "exporter_version": __version__,
             "league_id": league_id,
@@ -112,6 +126,122 @@ class SleeperExporter:
         }
         self._write_json(output_dir / "data" / "sync.json", sync)
         return {"league_name": league.get("name", league_id), "errors": self.errors}
+
+    @staticmethod
+    def _decision_context(
+        data: dict,
+        my_id: str | None,
+        label: str | None,
+        total_weeks: int,
+        enrichment: dict | None = None,
+    ) -> dict:
+        league = data["league"]
+        rosters = data["rosters"]
+        users = {user.get("user_id"): user for user in data["users"] if user.get("user_id")}
+        players = data.get("players") or {}
+        rostered_ids = {player_id for roster in rosters for player_id in roster.get("players") or []}
+        teams = []
+        for roster in sorted(rosters, key=lambda item: item.get("roster_id", 0)):
+            owner_id = roster.get("owner_id")
+            user = users.get(owner_id, {})
+            settings = roster.get("settings") or {}
+            teams.append(
+                {
+                    "roster_id": roster.get("roster_id"),
+                    "owner_id": owner_id,
+                    "display_name": user.get("display_name"),
+                    "team_name": (user.get("metadata") or {}).get("team_name"),
+                    "is_my_team": owner_id == my_id,
+                    "record": {
+                        "wins": settings.get("wins", 0),
+                        "losses": settings.get("losses", 0),
+                        "ties": settings.get("ties", 0),
+                        "points_for": settings.get("fpts", 0),
+                        "points_against": settings.get("fpts_against", 0),
+                    },
+                    "players": roster.get("players") or [],
+                    "taxi": roster.get("taxi") or [],
+                    "reserve": roster.get("reserve") or [],
+                }
+            )
+        player_status = {}
+        available_players = []
+        for player_id, player in players.items():
+            summary = {
+                "player_id": player_id,
+                "full_name": player.get("full_name"),
+                "position": player.get("position"),
+                "fantasy_positions": player.get("fantasy_positions") or [],
+                "team": player.get("team"),
+                "status": player.get("status"),
+                "injury_status": player.get("injury_status"),
+                "depth_chart_order": player.get("depth_chart_order"),
+                "years_exp": player.get("years_exp"),
+                "age": player.get("age"),
+            }
+            player_status[player_id] = summary
+            if player_id not in rostered_ids and player.get("active", True):
+                available_players.append(summary)
+        enrichment = enrichment or {}
+        return {
+            "snapshot": {
+                "league_id": league.get("league_id"),
+                "sport": league.get("sport"),
+                "season": league.get("season"),
+                "current_week": (data.get("state") or {}).get("week"),
+                "weeks_exported": total_weeks,
+            },
+            "my_team": {"user_id": my_id, "label": label},
+            "league_settings": league.get("settings") or {},
+            "roster_positions": league.get("roster_positions") or [],
+            "teams": teams,
+            "players": player_status,
+            "available_players": available_players,
+            "weekly_stats": data.get("stats", {}),
+            "weekly_projections": data.get("projections", {}),
+            "transactions": data.get("transactions", {}),
+            "matchups": data.get("matchups", {}),
+            "traded_picks": data.get("traded_picks", []),
+            "drafts": data.get("drafts", []),
+            "external_enrichment": enrichment,
+            "enrichment": {
+                "injuries_and_player_metadata": "Sleeper player catalog",
+                "stats_and_projections": "Sleeper optional endpoints",
+                "schedule_news_rankings": "provided by --enrichment-file when available",
+            },
+        }
+
+    @staticmethod
+    def _context_markdown(context: dict) -> str:
+        snapshot = context["snapshot"]
+        lines = [
+            "# Decision Context",
+            "",
+            f"- League: `{snapshot.get('league_id')}`",
+            f"- Sport/season: {snapshot.get('sport')} / {snapshot.get('season')}",
+            f"- Current week: {snapshot.get('current_week', 'unknown')}",
+            f"- My team: {context['my_team'].get('label') or context['my_team'].get('user_id') or 'not configured'}",
+            "",
+            "## Teams",
+            "",
+        ]
+        for team in context["teams"]:
+            record = team["record"]
+            lines.append(
+                f"- Roster {team['roster_id']}: {team.get('team_name') or team.get('display_name') or team.get('owner_id')}; "
+                f"{record['wins']}-{record['losses']}-{record['ties']}, {record['points_for']} points; "
+                f"{len(team['players'])} players"
+            )
+        lines += ["", "## Available Players", "", f"- Catalog entries available: {len(context['available_players'])}", ""]
+        lines += [
+            "## Data Notes",
+            "",
+            "- Raw responses are in `../data/`.",
+            "- Weekly stats and projections may be empty when Sleeper does not provide them for the sport or week.",
+            "- Schedule, news, rankings, and betting data require a separate enrichment source.",
+            "",
+        ]
+        return "\n".join(lines)
 
     def _write_data(self, output_dir: Path, data: dict) -> None:
         data_dir = output_dir / "data"
