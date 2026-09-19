@@ -93,8 +93,19 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(data["provider"], "espn")
         self.assertEqual(data["league"]["name"], "ESPN Test League")
         self.assertEqual(data["rosters"][0]["owner_id"], "M1")
+        self.assertEqual(data["users"][0]["team_id"], "1")
         self.assertEqual(data["players"]["101"]["full_name"], "Test Player")
         self.assertEqual(len(data["matchups"]["1"]), 1)
+
+    def test_espn_provider_tolerates_list_shaped_optional_sections(self):
+        provider = EspnProvider("2026")
+        data = provider._normalize(
+            "L1",
+            {"settings": [], "status": [], "transactions": [], "teams": [], "members": []},
+            weeks=1,
+        )
+        self.assertEqual(data["league"]["name"], "ESPN League L1")
+        self.assertEqual(data["transactions"], {"all": []})
 
 
 if __name__ == "__main__":

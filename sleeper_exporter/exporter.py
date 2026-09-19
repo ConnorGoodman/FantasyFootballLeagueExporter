@@ -54,6 +54,7 @@ class FantasyExporter:
                     user.get("user_id"),
                     user.get("username"),
                     user.get("display_name"),
+                    user.get("team_id"),
                 }:
                     my_team_user_id = user.get("user_id")
                     break
