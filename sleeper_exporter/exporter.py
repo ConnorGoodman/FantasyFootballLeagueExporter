@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 
 from . import __version__
 from .providers.sleeper import SleeperApiError, SleeperClient, SleeperProvider
@@ -41,6 +42,7 @@ class FantasyExporter:
         my_team_label: str | None = None,
         weeks: int | None = None,
         enrichment: dict | None = None,
+        median_bonus: bool = False,
     ) -> dict:
         started = datetime.now(timezone.utc)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +63,9 @@ class FantasyExporter:
         total_weeks = data.get("weeks") or weeks or 18
 
         self._write_data(output_dir, data)
-        context = self._decision_context(data, my_team_user_id, my_team_label, total_weeks, enrichment)
+        context = self._decision_context(
+            data, my_team_user_id, my_team_label, total_weeks, enrichment, median_bonus
+        )
         self._write_json(output_dir / "data" / "decision_context.json", context)
         self._write_ai(output_dir, data, my_team_user_id, my_team_label, started)
         self._write_json(output_dir / "ai" / "context.json", context)
@@ -95,6 +99,7 @@ class FantasyExporter:
         label: str | None,
         total_weeks: int,
         enrichment: dict | None = None,
+        median_bonus: bool = False,
     ) -> dict:
         league = data["league"]
         rosters = data["rosters"]
@@ -188,6 +193,10 @@ class FantasyExporter:
             ],
             "weekly_stats": data.get("stats", {}),
             "weekly_projections": data.get("projections", {}),
+            "median_bonus_enabled": median_bonus,
+            "weekly_median_scoring": (
+                FantasyExporter._weekly_median_scoring(data) if median_bonus else {}
+            ),
             "transactions": data.get("transactions", {}),
             "matchups": data.get("matchups", {}),
             "traded_picks": data.get("traded_picks", []),
@@ -199,6 +208,40 @@ class FantasyExporter:
                 "schedule_news_rankings": "provided by --enrichment-file when available",
             },
         }
+
+    @staticmethod
+    def _weekly_median_scoring(data: dict) -> dict:
+        """Derive each team's above-median result from provider matchup scores."""
+        result = {}
+        for week, matchups in (data.get("matchups") or {}).items():
+            scores = []
+            for matchup in matchups or []:
+                entries = [matchup]
+                if isinstance(matchup, dict) and isinstance(matchup.get("home"), dict):
+                    entries = [matchup.get("home"), matchup.get("away")]
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    score = entry.get("points", entry.get("totalPoints"))
+                    if isinstance(score, (int, float)):
+                        scores.append({
+                            "team_id": entry.get("roster_id", entry.get("teamId")),
+                            "score": score,
+                        })
+            if not scores:
+                continue
+            week_median = median(item["score"] for item in scores)
+            result[str(week)] = {
+                "median_score": week_median,
+                "teams": [
+                    {
+                        **item,
+                        "above_median": item["score"] > week_median,
+                    }
+                    for item in scores
+                ],
+            }
+        return result
 
     @staticmethod
     def _context_markdown(context: dict) -> str:
@@ -249,6 +292,16 @@ class FantasyExporter:
             "- Schedule, news, rankings, and betting data require a separate enrichment source.",
             "",
         ]
+        median_scoring = context.get("weekly_median_scoring") or {}
+        if median_scoring:
+            lines += ["## Weekly Median Scoring", ""]
+            for week, summary in median_scoring.items():
+                teams = ", ".join(
+                    f"{team.get('team_id')}: {team.get('score')} ({'above' if team.get('above_median') else 'not above'})"
+                    for team in summary["teams"]
+                )
+                lines.append(f"- Week {week}: median {summary['median_score']}; {teams}")
+            lines.append("")
         return "\n".join(lines)
 
     def _write_data(self, output_dir: Path, data: dict) -> None:

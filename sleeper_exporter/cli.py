@@ -84,6 +84,7 @@ def _export_entry(entry: dict, config_folder: Path) -> dict:
         my_team_label=entry.get("my_team_label"),
         weeks=entry.get("weeks"),
         enrichment=_enrichment(enrichment_path),
+        median_bonus=entry.get("median_bonus", False),
     )
     print(f"Exported {result['league_name']} to {output_dir}")
     if result["errors"]:
@@ -179,6 +180,7 @@ def main() -> None:
             my_team_label=config.get("my_team_label"),
             weeks=args.weeks,
             enrichment=_enrichment(args.enrichment_file),
+            median_bonus=config.get("median_bonus", False),
         )
     except Exception as exc:
         print(f"Export failed: {exc}", file=sys.stderr)

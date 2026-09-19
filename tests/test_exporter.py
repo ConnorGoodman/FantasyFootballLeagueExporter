@@ -74,6 +74,52 @@ class ExporterTests(unittest.TestCase):
             sync = json.loads((root / "data" / "sync.json").read_text())
             self.assertEqual(sync["my_team_user_id"], "U1")
 
+    def test_decision_context_derives_weekly_median_results(self):
+        data = {
+            "provider": "sleeper",
+            "league": {"league_id": "L1", "sport": "nfl", "season": "2026"},
+            "users": [],
+            "rosters": [],
+            "matchups": {
+                "1": [
+                    {"roster_id": 1, "points": 120.5},
+                    {"roster_id": 2, "points": 100},
+                    {"roster_id": 3, "points": 80},
+                ]
+            },
+            "players": {},
+            "state": {},
+        }
+        context = SleeperExporter._decision_context(data, None, None, 1, median_bonus=True)
+        self.assertEqual(context["weekly_median_scoring"]["1"]["median_score"], 100)
+        self.assertEqual(
+            [team["above_median"] for team in context["weekly_median_scoring"]["1"]["teams"]],
+            [True, False, False],
+        )
+
+        disabled = SleeperExporter._decision_context(data, None, None, 1)
+        self.assertFalse(disabled["median_bonus_enabled"])
+        self.assertEqual(disabled["weekly_median_scoring"], {})
+
+    def test_decision_context_derives_median_from_espn_matchups(self):
+        data = {
+            "matchups": {
+                "1": [
+                    {
+                        "home": {"teamId": 1, "totalPoints": 120},
+                        "away": {"teamId": 2, "totalPoints": 100},
+                    },
+                    {
+                        "home": {"teamId": 3, "totalPoints": 80},
+                        "away": {"teamId": 4, "totalPoints": 60},
+                    },
+                ]
+            }
+        }
+        summary = SleeperExporter._weekly_median_scoring(data)["1"]
+        self.assertEqual(summary["median_score"], 90)
+        self.assertEqual([team["above_median"] for team in summary["teams"]], [True, True, False, False])
+
     def test_espn_provider_normalizes_core_snapshot_fields(self):
         raw = {
             "settings": {"name": "ESPN Test League"},

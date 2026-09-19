@@ -31,6 +31,7 @@ Put all league jobs in one `.fantasy-export.json` file and run them together:
       "folder": "exports/sleeper",
       "my_team_user_id": "SLEEPER_USER_ID",
       "my_team_label": "Sleeper Team",
+      "median_bonus": true,
       "weeks": 18
     },
     {
@@ -41,6 +42,7 @@ Put all league jobs in one `.fantasy-export.json` file and run them together:
       "folder": "exports/espn",
       "my_team_user_id": "ESPN_TEAM_OR_OWNER_ID",
       "my_team_label": "ESPN Team",
+      "median_bonus": false,
       "weeks": 18
     }
   ]
@@ -56,6 +58,8 @@ fantasy-export set-team . --league sleeper-home --user-id SLEEPER_USER_ID --labe
 ```
 
 Folders and `enrichment_file` paths inside the config are relative to the config folder. ESPN credentials continue to come from `ESPN_SWID` and `ESPN_S2` environment variables.
+
+Set `median_bonus` to `true` for leagues that award a bonus to teams scoring above the weekly median. The exporter derives the weekly median from matchup scores and adds the results to the AI decision context. It defaults to `false`.
 
 For ESPN, provide the season. Public leagues work without credentials; private leagues may require the `ESPN_SWID` and `ESPN_S2` environment variables:
 
@@ -154,14 +158,14 @@ For automation, schedule `docker compose run --rm sleeper-export` from this repo
 The included GitHub Actions workflow builds the image on pull requests and publishes it to GitHub Container Registry when `main` or a version tag is pushed:
 
 ```text
-ghcr.io/connorgoodman/sleeperleagueexporter:latest
+ghcr.io/connorgoodman/fantasyfootballleagueexporter:latest
 ```
 
 The package inherits the repository's visibility. For a private package, authenticate before pulling:
 
 ```bash
 echo "$CR_PAT" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-docker pull ghcr.io/connorgoodman/sleeperleagueexporter:latest
+docker pull ghcr.io/connorgoodman/fantasyfootballleagueexporter:latest
 ```
 
 The first package publish may require enabling **Actions** to write packages in the repository settings. A version tag such as `v0.1.0` also publishes a matching image tag.
