@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -101,6 +102,28 @@ class ExporterTests(unittest.TestCase):
         self.assertFalse(disabled["median_bonus_enabled"])
         self.assertEqual(disabled["weekly_median_scoring"], {})
 
+    def test_decision_context_adds_median_wins_to_standings(self):
+        data = {
+            "provider": "sleeper",
+            "league": {"league_id": "L1", "sport": "nfl", "season": "2026"},
+            "users": [],
+            "rosters": [
+                {"roster_id": 1, "owner_id": "U1", "players": [], "settings": {"wins": 1, "losses": 0, "ties": 0, "fpts": 120}},
+                {"roster_id": 2, "owner_id": "U2", "players": [], "settings": {"wins": 0, "losses": 1, "ties": 0, "fpts": 100}},
+            ],
+            "matchups": {"1": [
+                {"roster_id": 1, "points": 120},
+                {"roster_id": 2, "points": 100},
+            ], "2": [{"roster_id": 1, "points": 0}, {"roster_id": 2, "points": 0}]},
+            "players": {},
+            "state": {"week": 2},
+        }
+        context = SleeperExporter._decision_context(data, None, None, 2, median_bonus=True)
+        self.assertEqual(context["standings"][0]["roster_id"], 1)
+        self.assertEqual(context["standings"][0]["median_wins"], 1)
+        self.assertEqual(context["standings"][0]["total_wins"], 2)
+        self.assertEqual(list(context["weekly_median_scoring"]), ["1"])
+
     def test_decision_context_derives_median_from_espn_matchups(self):
         data = {
             "matchups": {
@@ -123,13 +146,16 @@ class ExporterTests(unittest.TestCase):
     def test_espn_provider_normalizes_core_snapshot_fields(self):
         raw = {
             "settings": {"name": "ESPN Test League"},
+            "status": {"currentMatchupPeriod": 1},
             "members": [{"id": "M1", "displayName": "Alex"}],
             "teams": [{
                 "id": 1,
                 "name": "The Tests",
                 "owners": ["M1"],
                 "record": {"overall": {"wins": 2, "losses": 1, "ties": 0, "pointsFor": 250}},
-                "roster": {"entries": [{"playerPoolEntry": {"id": 101}}]},
+                "roster": {"entries": [{"playerPoolEntry": {"id": 101, "player": {"id": 101, "stats": [
+                    {"seasonId": 2026, "scoringPeriodId": 1, "appliedTotal": 17.5}
+                ]}}}]},
             }],
             "players": [{"player": {"id": 101, "fullName": "Test Player", "proTeamId": 10}}],
             "schedule": [{"matchupPeriodId": 1, "home": {"teamId": 1}}],
@@ -141,7 +167,26 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(data["rosters"][0]["owner_id"], "M1")
         self.assertEqual(data["users"][0]["team_id"], "1")
         self.assertEqual(data["players"]["101"]["full_name"], "Test Player")
+        self.assertEqual(data["state"]["week"], 1)
         self.assertEqual(len(data["matchups"]["1"]), 1)
+        self.assertEqual(data["matchups"]["1"][0]["home"]["roster_id"], "1")
+        self.assertEqual(data["stats"]["1"]["101"]["points"], 17.5)
+
+    def test_espn_provider_builds_players_from_roster_entries(self):
+        provider = EspnProvider("2026")
+        data = provider._normalize(
+            "L1",
+            {
+                "teams": [{
+                    "id": 1,
+                    "roster": {"entries": [{
+                        "playerPoolEntry": {"id": 101, "player": {"id": 101, "fullName": "Roster Player"}}
+                    }]},
+                }],
+            },
+            weeks=1,
+        )
+        self.assertEqual(data["players"]["101"]["full_name"], "Roster Player")
 
     def test_espn_provider_tolerates_list_shaped_optional_sections(self):
         provider = EspnProvider("2026")
@@ -152,6 +197,43 @@ class ExporterTests(unittest.TestCase):
         )
         self.assertEqual(data["league"]["name"], "ESPN League L1")
         self.assertEqual(data["transactions"], {"all": []})
+
+    def test_week_markdown_preserves_weekly_starter_status(self):
+        exporter = SleeperExporter()
+        data = {
+            "league": {"name": "Test League"},
+            "users": [],
+            "players": {
+                "P1": {"full_name": "Starter Player"},
+                "P2": {"full_name": "Bench Player"},
+            },
+            "rosters": [{"roster_id": "1", "players": ["P1", "P2"]}],
+            "matchups": {"1": [{
+                "matchup_id": 1,
+                "roster_id": "1",
+                "points": 10,
+                "starters": ["P1"],
+                "players": ["P1", "P2"],
+                "players_points": {"P1": 8, "P2": 20},
+            }]},
+            "stats": {"1": {"P1": {"points": 8}, "P2": {"points": 20}}},
+            "transactions": {},
+            "drafts": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            exporter._write_ai(Path(temp_dir), data, None, None, datetime.now())
+            week = (Path(temp_dir) / "ai" / "weeks" / "week-01.md").read_text()
+            self.assertIn("Starter Player (starter): 8", week)
+            self.assertIn("Bench Player (bench): 20", week)
+
+    def test_espn_stats_ignore_projected_records(self):
+        data = EspnProvider._stats({"teams": [{"roster": {"entries": [{
+            "playerPoolEntry": {"id": 101, "player": {"id": 101, "stats": [
+                {"seasonId": 2026, "scoringPeriodId": 1, "statSourceId": 1, "appliedTotal": 99},
+                {"seasonId": 2026, "scoringPeriodId": 1, "statSourceId": 0, "appliedTotal": 12},
+            ]}}
+        }]}}]}, 1)
+        self.assertEqual(data["1"]["101"]["points"], 12)
 
 
 if __name__ == "__main__":

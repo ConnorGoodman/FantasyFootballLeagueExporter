@@ -108,33 +108,83 @@ class EspnProvider:
             "league": league,
             "users": users,
             "rosters": rosters,
-            "state": {},
+            "state": self._state(raw),
             "players": self._players(raw),
             "traded_picks": [],
             "winners_bracket": [],
             "losers_bracket": [],
             "matchups": self._matchups(raw, weeks),
             "transactions": {"all": self._list(self._dict(raw.get("transactions")).get("transactions"))},
-            "stats": {},
+            "stats": self._stats(raw, weeks),
             "projections": {},
             "drafts": [raw.get("draftDetail")] if raw.get("draftDetail") else [],
             "weeks": weeks or 18,
         }
 
     @staticmethod
+    def _stats(raw: dict, weeks: int | None) -> dict:
+        result = {}
+        for team in EspnProvider._list(raw.get("teams")):
+            roster = EspnProvider._dict(team.get("roster")) if isinstance(team, dict) else {}
+            for entry in EspnProvider._list(roster.get("entries")):
+                if not isinstance(entry, dict):
+                    continue
+                pool_entry = EspnProvider._dict(entry.get("playerPoolEntry"))
+                player = EspnProvider._dict(pool_entry.get("player"))
+                player_id = str(pool_entry.get("id") or player.get("id"))
+                if player_id == "None":
+                    continue
+                for stat in EspnProvider._list(player.get("stats")):
+                    if not isinstance(stat, dict) or stat.get("seasonId") is None:
+                        continue
+                    if stat.get("statSourceId", 0) != 0:
+                        continue
+                    week = str(stat.get("scoringPeriodId"))
+                    if week == "None" or (weeks and int(week) > weeks):
+                        continue
+                    points = stat.get("appliedTotal")
+                    if isinstance(points, (int, float)):
+                        result.setdefault(week, {})[player_id] = {"points": points}
+        return result
+
+    @staticmethod
+    def _state(raw: dict) -> dict:
+        status = EspnProvider._dict(raw.get("status"))
+        return {
+            "week": status.get("currentMatchupPeriod"),
+            "current_matchup_period": status.get("currentMatchupPeriod"),
+            "latest_scoring_period": status.get("latestScoringPeriod"),
+            "first_scoring_period": status.get("firstScoringPeriod"),
+            "final_scoring_period": status.get("finalScoringPeriod"),
+            "is_active": status.get("isActive"),
+            "is_expired": status.get("isExpired"),
+            "is_viewable": status.get("isViewable"),
+        }
+
+    @staticmethod
     def _players(raw: dict) -> dict:
         players = {}
-        for entry in EspnProvider._list(raw.get("players")):
+        entries = EspnProvider._list(raw.get("players"))
+        for team in EspnProvider._list(raw.get("teams")):
+            roster = EspnProvider._dict(team.get("roster"))
+            entries.extend(
+                {"player": EspnProvider._dict(item.get("playerPoolEntry")).get("player")}
+                for item in EspnProvider._list(roster.get("entries"))
+                if isinstance(item, dict)
+            )
+        for entry in entries:
             if not isinstance(entry, dict):
                 continue
             player = EspnProvider._dict(entry.get("player")) or entry
             player_id = str(player.get("id"))
             if player_id == "None":
                 continue
+            if player_id in players and not player.get("fullName"):
+                continue
             players[player_id] = {
                 "full_name": player.get("fullName"),
                 "position": player.get("defaultPosition"),
-                "team": player.get("proTeamId"),
+                "team": str(player["proTeamId"]) if player.get("proTeamId") is not None else None,
                 "status": player.get("status"),
                 "active": player.get("active", True),
             }
@@ -143,13 +193,31 @@ class EspnProvider:
     @staticmethod
     def _matchups(raw: dict, weeks: int | None) -> dict:
         result = {}
+        seen = set()
         for matchup in EspnProvider._list(raw.get("schedule")):
             if not isinstance(matchup, dict):
                 continue
             week = str(matchup.get("matchupPeriodId", 1))
             if weeks and int(week) > weeks:
                 continue
-            result.setdefault(week, []).append(matchup)
+            matchup_id = matchup.get("id")
+            if matchup_id in seen:
+                continue
+            seen.add(matchup_id)
+            sides = []
+            for side_name in ("home", "away"):
+                side = EspnProvider._dict(matchup.get(side_name))
+                if side.get("teamId") is None:
+                    continue
+                sides.append({
+                    "roster_id": str(side["teamId"]),
+                    "points": side.get("totalPoints", 0),
+                })
+            result.setdefault(week, []).append({
+                "matchup_id": matchup_id,
+                "home": sides[0] if sides else {},
+                "away": sides[1] if len(sides) > 1 else {},
+            })
         return result
 
     @staticmethod

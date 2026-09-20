@@ -171,6 +171,9 @@ class FantasyExporter:
             if player_id not in rostered_ids and player.get("active", True):
                 available_players.append(summary)
         enrichment = enrichment or {}
+        weekly_median_scoring = (
+            FantasyExporter._weekly_median_scoring(data) if median_bonus else {}
+        )
         return {
             "snapshot": {
                 "league_id": league.get("league_id"),
@@ -194,9 +197,8 @@ class FantasyExporter:
             "weekly_stats": data.get("stats", {}),
             "weekly_projections": data.get("projections", {}),
             "median_bonus_enabled": median_bonus,
-            "weekly_median_scoring": (
-                FantasyExporter._weekly_median_scoring(data) if median_bonus else {}
-            ),
+            "weekly_median_scoring": weekly_median_scoring,
+            "standings": FantasyExporter._standings(teams, weekly_median_scoring),
             "transactions": data.get("transactions", {}),
             "matchups": data.get("matchups", {}),
             "traded_picks": data.get("traded_picks", []),
@@ -230,6 +232,8 @@ class FantasyExporter:
                         })
             if not scores:
                 continue
+            if not any(item["score"] > 0 for item in scores):
+                continue
             week_median = median(item["score"] for item in scores)
             result[str(week)] = {
                 "median_score": week_median,
@@ -242,6 +246,40 @@ class FantasyExporter:
                 ],
             }
         return result
+
+    @staticmethod
+    def _standings(teams: list[dict], weekly_median_scoring: dict) -> list[dict]:
+        median_wins = {}
+        for summary in weekly_median_scoring.values():
+            for team in summary["teams"]:
+                roster_id = str(team.get("team_id"))
+                if team.get("above_median"):
+                    median_wins[roster_id] = median_wins.get(roster_id, 0) + 1
+        standings = []
+        for team in teams:
+            record = team["record"]
+            roster_id = str(team.get("roster_id"))
+            median_wins_for_team = median_wins.get(roster_id, 0)
+            standings.append({
+                "roster_id": team.get("roster_id"),
+                "team_name": team.get("team_name") or team.get("display_name") or team.get("owner_id"),
+                "head_to_head_wins": record["wins"],
+                "head_to_head_losses": record["losses"],
+                "ties": record["ties"],
+                "median_wins": median_wins_for_team,
+                "total_wins": record["wins"] + median_wins_for_team,
+                "total_losses": record["losses"],
+                "points_for": record["points_for"],
+            })
+        return sorted(
+            standings,
+            key=lambda item: (
+                -item["total_wins"],
+                -item["head_to_head_wins"],
+                -item["points_for"],
+                str(item["roster_id"]),
+            ),
+        )
 
     @staticmethod
     def _context_markdown(context: dict) -> str:
@@ -283,6 +321,14 @@ class FantasyExporter:
                 lines.append(f"- {player.get('full_name') or player.get('player_id')}: {detail or player.get('status')}")
         else:
             lines.append(f"- None reported by {provider_label}.")
+        standings = context.get("standings") or []
+        if standings:
+            lines += ["", "## Standings", ""]
+            for team in standings:
+                record = f"{team['total_wins']}-{team['total_losses']}"
+                if context.get("median_bonus_enabled"):
+                    record += f" ({team['head_to_head_wins']}-{team['head_to_head_losses']} head-to-head, {team['median_wins']} median wins)"
+                lines.append(f"- Roster {team['roster_id']}: {team['team_name']}; {record}; {team['points_for']} points")
         lines += ["", "## Available Players", "", f"- Catalog entries available: {len(context['available_players'])}", ""]
         lines += [
             "## Data Notes",
@@ -347,10 +393,32 @@ class FantasyExporter:
             if player.get("injury_status") or player.get("injury_notes") or player.get("status") not in (None, "Active"):
                 availability.append(self._player_line(player, player_id))
         self._write_text(ai_dir / "players.md", "\n".join(availability) + "\n")
+        weekly_stats = data.get("stats") or {}
+        roster_players_by_team = {
+            str(roster.get("roster_id")): roster.get("players") or []
+            for roster in data.get("rosters") or []
+        }
         for week, matchups in data["matchups"].items():
             text = [f"# Week {week}", "", "| Matchup ID | Roster | Points | Players |", "| --- | ---: | ---: | --- |"]
             for matchup in matchups:
-                text.append(f"| {matchup.get('matchup_id', '-') } | {matchup.get('roster_id', '-')} | {matchup.get('points', 0)} | {', '.join(matchup.get('players', []))} |")
+                sides = [matchup]
+                if isinstance(matchup.get("home"), dict):
+                    sides = [matchup.get("home"), matchup.get("away")]
+                for side in sides:
+                    if not isinstance(side, dict):
+                        continue
+                    roster_id = str(side.get("roster_id", side.get("teamId", "-")))
+                    player_ids = side.get("players") or roster_players_by_team.get(roster_id, [])
+                    weekly_starters = {str(player_id) for player_id in side.get("starters") or []}
+                    has_weekly_lineup = bool(side.get("starters"))
+                    matchup_points = side.get("players_points") or {}
+                    player_lines = [
+                        f"{self._display_player_name(player_id, players.get(player_id) or {})} "
+                        f"({'starter' if player_id in weekly_starters else 'bench' if has_weekly_lineup else 'lineup unknown'}): "
+                        f"{matchup_points.get(player_id, (weekly_stats.get(str(week), {}).get(player_id) or {}).get('points', '-'))}"
+                        for player_id in player_ids
+                    ]
+                    text.append(f"| {matchup.get('matchup_id', matchup.get('id', '-'))} | {roster_id} | {side.get('points', side.get('totalPoints', 0))} | {', '.join(player_lines)} |")
             self._write_text(weeks_dir / f"week-{int(week):02d}.md", "\n".join(text) + "\n")
         self._write_text(ai_dir / "transactions.md", self._transactions_markdown(data["transactions"]))
         self._write_text(ai_dir / "drafts.md", self._drafts_markdown(data["drafts"]))
