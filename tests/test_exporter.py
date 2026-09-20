@@ -78,7 +78,7 @@ class ExporterTests(unittest.TestCase):
     def test_decision_context_derives_weekly_median_results(self):
         data = {
             "provider": "sleeper",
-            "league": {"league_id": "L1", "sport": "nfl", "season": "2026"},
+            "league": {"league_id": "L1", "sport": "nfl", "season": "2026", "settings": {"last_scored_leg": 1}},
             "users": [],
             "rosters": [],
             "matchups": {
@@ -120,8 +120,8 @@ class ExporterTests(unittest.TestCase):
         }
         context = SleeperExporter._decision_context(data, None, None, 2, median_bonus=True)
         self.assertEqual(context["standings"][0]["roster_id"], 1)
-        self.assertEqual(context["standings"][0]["median_wins"], 1)
-        self.assertEqual(context["standings"][0]["total_wins"], 2)
+        self.assertEqual(context["standings"][0]["above_median_weeks"], 1)
+        self.assertEqual(context["standings"][0]["total_wins"], 1)
         self.assertEqual(list(context["weekly_median_scoring"]), ["1"])
 
     def test_decision_context_derives_median_from_espn_matchups(self):

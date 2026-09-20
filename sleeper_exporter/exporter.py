@@ -215,7 +215,14 @@ class FantasyExporter:
     def _weekly_median_scoring(data: dict) -> dict:
         """Derive each team's above-median result from provider matchup scores."""
         result = {}
+        league_settings = (data.get("league") or {}).get("settings") or {}
+        state = data.get("state") or {}
+        last_scored_week = league_settings.get("last_scored_leg")
+        if last_scored_week is None:
+            last_scored_week = state.get("latest_scoring_period")
         for week, matchups in (data.get("matchups") or {}).items():
+            if last_scored_week is not None and int(week) > int(last_scored_week):
+                continue
             scores = []
             for matchup in matchups or []:
                 entries = [matchup]
@@ -249,25 +256,24 @@ class FantasyExporter:
 
     @staticmethod
     def _standings(teams: list[dict], weekly_median_scoring: dict) -> list[dict]:
-        median_wins = {}
+        above_median_weeks = {}
         for summary in weekly_median_scoring.values():
             for team in summary["teams"]:
                 roster_id = str(team.get("team_id"))
                 if team.get("above_median"):
-                    median_wins[roster_id] = median_wins.get(roster_id, 0) + 1
+                    above_median_weeks[roster_id] = above_median_weeks.get(roster_id, 0) + 1
         standings = []
         for team in teams:
             record = team["record"]
             roster_id = str(team.get("roster_id"))
-            median_wins_for_team = median_wins.get(roster_id, 0)
             standings.append({
                 "roster_id": team.get("roster_id"),
                 "team_name": team.get("team_name") or team.get("display_name") or team.get("owner_id"),
                 "head_to_head_wins": record["wins"],
                 "head_to_head_losses": record["losses"],
                 "ties": record["ties"],
-                "median_wins": median_wins_for_team,
-                "total_wins": record["wins"] + median_wins_for_team,
+                "above_median_weeks": above_median_weeks.get(roster_id, 0),
+                "total_wins": record["wins"],
                 "total_losses": record["losses"],
                 "points_for": record["points_for"],
             })
@@ -327,7 +333,7 @@ class FantasyExporter:
             for team in standings:
                 record = f"{team['total_wins']}-{team['total_losses']}"
                 if context.get("median_bonus_enabled"):
-                    record += f" ({team['head_to_head_wins']}-{team['head_to_head_losses']} head-to-head, {team['median_wins']} median wins)"
+                    record += f" ({team['above_median_weeks']} weeks above median)"
                 lines.append(f"- Roster {team['roster_id']}: {team['team_name']}; {record}; {team['points_for']} points")
         lines += ["", "## Available Players", "", f"- Catalog entries available: {len(context['available_players'])}", ""]
         lines += [
