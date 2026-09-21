@@ -7,6 +7,7 @@ from statistics import median
 
 from . import __version__
 from .providers.sleeper import SleeperApiError, SleeperClient, SleeperProvider
+from .supplements import FantasyProsSupplement
 
 
 class FantasyExporter:
@@ -43,6 +44,7 @@ class FantasyExporter:
         weeks: int | None = None,
         enrichment: dict | None = None,
         median_bonus: bool = False,
+        fantasypros: bool = False,
     ) -> dict:
         started = datetime.now(timezone.utc)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -62,7 +64,16 @@ class FantasyExporter:
                     break
         total_weeks = data.get("weeks") or weeks or 18
 
+        supplement_errors = []
+        if fantasypros:
+            supplement = FantasyProsSupplement()
+            data["fantasypros"] = supplement.fetch()
+            supplement_errors = supplement.endpoint_errors()
+
         self._write_data(output_dir, data)
+        enrichment = dict(enrichment or {})
+        if fantasypros:
+            enrichment["fantasypros"] = data["fantasypros"]
         context = self._decision_context(
             data, my_team_user_id, my_team_label, total_weeks, enrichment, median_bonus
         )
@@ -85,12 +96,12 @@ class FantasyExporter:
             "provider": self.provider.name,
             "api_base_url": self.provider.base_url,
             "endpoints_requested": self.provider.endpoints,
-            "errors": self.errors,
+            "errors": self.errors + supplement_errors,
             "requested_my_team": requested_team_id,
             "my_team_user_id": my_team_user_id,
         }
         self._write_json(output_dir / "data" / "sync.json", sync)
-        return {"league_name": league.get("name", league_id), "errors": self.errors}
+        return {"league_name": league.get("name", league_id), "errors": self.errors + supplement_errors}
 
     @staticmethod
     def _decision_context(

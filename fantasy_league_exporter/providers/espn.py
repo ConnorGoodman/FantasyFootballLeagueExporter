@@ -50,6 +50,11 @@ class EspnProvider:
             with urlopen(Request(self.base_url + path, headers=headers), timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+            if isinstance(exc, HTTPError) and exc.code == 401:
+                raise EspnApiError(
+                    f"GET {path}: HTTP 401 Unauthorized. Set ESPN_SWID and ESPN_S2 "
+                    "for private ESPN leagues."
+                ) from exc
             raise EspnApiError(f"GET {path}: {exc}") from exc
 
     def _normalize(self, league_id: str, raw: dict, weeks: int | None) -> dict:

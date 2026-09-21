@@ -1,3 +1,0 @@
-[console_scripts]
-fantasy-export = sleeper_exporter.cli:main
-sleeper-export = sleeper_exporter.cli:main

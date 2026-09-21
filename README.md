@@ -32,6 +32,7 @@ Put all league jobs in one `.fantasy-export.json` file and run them together:
       "my_team_user_id": "SLEEPER_USER_ID",
       "my_team_label": "Sleeper Team",
       "median_bonus": true,
+      "fantasypros": true,
       "weeks": 18
     },
     {
@@ -43,6 +44,7 @@ Put all league jobs in one `.fantasy-export.json` file and run them together:
       "my_team_user_id": "ESPN_TEAM_OR_OWNER_ID",
       "my_team_label": "ESPN Team",
       "median_bonus": false,
+      "fantasypros": true,
       "weeks": 18
     }
   ]
@@ -119,6 +121,7 @@ my-league/
   data/                      # complete JSON API snapshots
     league.json users.json rosters.json state.json players.json
     matchups.json transactions.json drafts.json
+    fantasypros.json       # optional FantasyPros rankings, projections, injuries, and schedule
     traded_picks.json winners_bracket.json losers_bracket.json
     sync.json                # timestamps, provider, endpoints, and errors
     decision_context.json    # normalized inputs for lineup, waiver, and trade decisions
@@ -183,5 +186,7 @@ sleeper-export export LEAGUE_ID ./my-league --weeks 18 --enrichment-file .\enric
 ```
 
 The enrichment object is copied to `external_enrichment` in the decision context, preserving provider-specific fields without imposing a schema.
+
+Set `fantasypros` to `true` in a league configuration, or pass `--fantasypros` to a single export, to fetch public FantasyPros tables. The supplement works with both Sleeper and ESPN because it runs after provider normalization. It writes parsed tables to `data/fantasypros.json` and includes the same payload under `external_enrichment.fantasypros`. FantasyPros pages can change or reject automated requests; failures are recorded in `data/sync.json` and do not prevent the league export.
 
 Each export also writes a timestamped normalized context under `history/`. This preserves changes in rosters, records, player status, stats, projections, and external enrichment so an agent can identify trends across exports.

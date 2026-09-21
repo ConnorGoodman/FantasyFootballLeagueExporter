@@ -6,9 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from sleeper_exporter import cli
-from sleeper_exporter.exporter import SleeperExporter
-from sleeper_exporter.providers.espn import EspnProvider
+from fantasy_league_exporter import cli
+from fantasy_league_exporter.exporter import SleeperExporter
+from fantasy_league_exporter.providers.espn import EspnProvider
+from fantasy_league_exporter.supplements import FantasyProsSupplement
 
 
 class FakeClient:
@@ -74,6 +75,33 @@ class ExporterTests(unittest.TestCase):
             self.assertEqual(len(list((root / "history").glob("decision_context-*.json"))), 1)
             sync = json.loads((root / "data" / "sync.json").read_text())
             self.assertEqual(sync["my_team_user_id"], "U1")
+
+    def test_fantasypros_supplement_is_written_and_added_to_context(self):
+        exporter = SleeperExporter()
+        exporter.client = FakeClient()
+        supplement_data = {
+            "provider": "fantasypros",
+            "fetched_at": "2026-09-21T00:00:00+00:00",
+            "pages": {"consensus_rankings": {"tables": [[{"Player": "Test Player"}]]}},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "fantasy_league_exporter.exporter.FantasyProsSupplement"
+        ) as supplement_class:
+            supplement_class.return_value.fetch.return_value = supplement_data
+            supplement_class.return_value.endpoint_errors.return_value = []
+            exporter.export("L1", Path(temp_dir), weeks=1, fantasypros=True)
+            root = Path(temp_dir)
+            self.assertEqual(
+                json.loads((root / "data" / "fantasypros.json").read_text())["provider"],
+                "fantasypros",
+            )
+            context = json.loads((root / "data" / "decision_context.json").read_text())
+            self.assertEqual(context["external_enrichment"]["fantasypros"], supplement_data)
+
+    def test_fantasypros_parser_converts_html_tables_to_records(self):
+        html = "<table><tr><th>Player</th><th>Rank</th></tr><tr><td>Test Player</td><td>12</td></tr></table>"
+        tables = FantasyProsSupplement._tables(html)
+        self.assertEqual(tables, [[{"Player": "Test Player", "Rank": "12"}]])
 
     def test_decision_context_derives_weekly_median_results(self):
         data = {

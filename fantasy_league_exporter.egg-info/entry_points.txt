@@ -1,0 +1,3 @@
+[console_scripts]
+fantasy-export = fantasy_league_exporter.cli:main
+sleeper-export = fantasy_league_exporter.cli:main

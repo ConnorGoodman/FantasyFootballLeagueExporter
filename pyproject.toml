@@ -9,8 +9,8 @@ description = "Export fantasy leagues into git-friendly, AI-readable snapshots"
 requires-python = ">=3.11"
 
 [project.scripts]
-fantasy-export = "sleeper_exporter.cli:main"
-sleeper-export = "sleeper_exporter.cli:main"
+fantasy-export = "fantasy_league_exporter.cli:main"
+sleeper-export = "fantasy_league_exporter.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["sleeper_exporter*"]
+include = ["fantasy_league_exporter*"]

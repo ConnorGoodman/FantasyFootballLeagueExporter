@@ -85,6 +85,7 @@ def _export_entry(entry: dict, config_folder: Path) -> dict:
         weeks=entry.get("weeks"),
         enrichment=_enrichment(enrichment_path),
         median_bonus=entry.get("median_bonus", False),
+        fantasypros=entry.get("fantasypros", False),
     )
     print(f"Exported {result['league_name']} to {output_dir}")
     if result["errors"]:
@@ -109,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--enrichment-file",
         type=Path,
         help="JSON file containing external schedule, news, rankings, or projection data",
+    )
+    export.add_argument(
+        "--fantasypros",
+        action="store_true",
+        help="Fetch public FantasyPros rankings, projections, injuries, and schedule data",
     )
 
     export_all = commands.add_parser("export-all", help="Export all leagues in a config file")
@@ -181,6 +187,7 @@ def main() -> None:
             weeks=args.weeks,
             enrichment=_enrichment(args.enrichment_file),
             median_bonus=config.get("median_bonus", False),
+            fantasypros=args.fantasypros or config.get("fantasypros", False),
         )
     except Exception as exc:
         print(f"Export failed: {exc}", file=sys.stderr)
