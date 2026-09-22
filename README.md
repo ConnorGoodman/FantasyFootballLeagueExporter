@@ -32,7 +32,7 @@ Put all league jobs in one `.fantasy-export.json` file and run them together:
       "my_team_user_id": "SLEEPER_USER_ID",
       "my_team_label": "Sleeper Team",
       "median_bonus": true,
-      "fantasypros": true,
+      "fantasypros": false,
       "weeks": 18
     },
     {

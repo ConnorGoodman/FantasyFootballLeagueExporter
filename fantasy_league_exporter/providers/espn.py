@@ -34,7 +34,20 @@ class EspnProvider:
         ])
         path = f"/apis/v3/games/ffl/seasons/{self.season}/segments/0/leagues/{league_id}?{params}"
         raw = self._get(path)
-        return self._normalize(league_id, raw, weeks)
+        scoring_period = self._dict(raw.get("status")).get("currentScoringPeriod")
+        if scoring_period is None:
+            scoring_period = self._dict(raw.get("status")).get("currentMatchupPeriod")
+        player_pool = None
+        if scoring_period is not None:
+            player_path = (
+                f"/apis/v3/games/ffl/seasons/{self.season}/segments/0/leagues/{league_id}/players?"
+                f"{urlencode({'view': 'players_wl', 'scoringPeriodId': scoring_period, 'limit': 1000})}"
+            )
+            try:
+                player_pool = self._get(player_path)
+            except EspnApiError as exc:
+                self.errors.append({"endpoint": player_path, "error": str(exc)})
+        return self._normalize(league_id, raw, weeks, player_pool)
 
     def _get(self, path: str):
         self.endpoints.append(path)
@@ -57,7 +70,7 @@ class EspnProvider:
                 ) from exc
             raise EspnApiError(f"GET {path}: {exc}") from exc
 
-    def _normalize(self, league_id: str, raw: dict, weeks: int | None) -> dict:
+    def _normalize(self, league_id: str, raw: dict, weeks: int | None, player_pool=None) -> dict:
         raw = self._dict(raw)
         teams = self._list(raw.get("teams"))
         members = {
@@ -114,7 +127,7 @@ class EspnProvider:
             "users": users,
             "rosters": rosters,
             "state": self._state(raw),
-            "players": self._players(raw),
+            "players": self._players(raw, rosters, player_pool),
             "traded_picks": [],
             "winners_bracket": [],
             "losers_bracket": [],
@@ -167,9 +180,12 @@ class EspnProvider:
         }
 
     @staticmethod
-    def _players(raw: dict) -> dict:
+    def _players(raw: dict, rosters: list | None = None, player_pool=None) -> dict:
         players = {}
-        entries = EspnProvider._list(raw.get("players"))
+        entries = EspnProvider._list(player_pool)
+        if isinstance(player_pool, dict):
+            entries = EspnProvider._list(player_pool.get("players"))
+        entries.extend(EspnProvider._list(raw.get("players")))
         for team in EspnProvider._list(raw.get("teams")):
             roster = EspnProvider._dict(team.get("roster"))
             entries.extend(
@@ -177,10 +193,21 @@ class EspnProvider:
                 for item in EspnProvider._list(roster.get("entries"))
                 if isinstance(item, dict)
             )
+        ownership = {}
+        for roster in rosters or []:
+            for player_id in roster.get("players") or []:
+                ownership[str(player_id)] = {
+                    "roster_id": roster.get("roster_id"),
+                    "fantasy_owner_id": roster.get("owner_id"),
+                }
         for entry in entries:
             if not isinstance(entry, dict):
                 continue
-            player = EspnProvider._dict(entry.get("player")) or entry
+            pool_entry = EspnProvider._dict(entry.get("playerPoolEntry"))
+            player = EspnProvider._dict(entry.get("player"))
+            if not player and pool_entry:
+                player = EspnProvider._dict(pool_entry.get("player"))
+            player = player or entry
             player_id = str(player.get("id"))
             if player_id == "None":
                 continue
@@ -192,6 +219,7 @@ class EspnProvider:
                 "team": str(player["proTeamId"]) if player.get("proTeamId") is not None else None,
                 "status": player.get("status"),
                 "active": player.get("active", True),
+                **ownership.get(player_id, {}),
             }
         return players
 

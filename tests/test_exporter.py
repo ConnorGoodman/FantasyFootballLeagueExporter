@@ -189,12 +189,19 @@ class ExporterTests(unittest.TestCase):
             "schedule": [{"matchupPeriodId": 1, "home": {"teamId": 1}}],
         }
         provider = EspnProvider("2026")
-        data = provider._normalize("L1", raw, weeks=1)
+        data = provider._normalize(
+            "L1",
+            raw,
+            weeks=1,
+            player_pool={"players": [{"player": {"id": 102, "fullName": "Waiver Player", "proTeamId": 11}}]},
+        )
         self.assertEqual(data["provider"], "espn")
         self.assertEqual(data["league"]["name"], "ESPN Test League")
         self.assertEqual(data["rosters"][0]["owner_id"], "M1")
         self.assertEqual(data["users"][0]["team_id"], "1")
         self.assertEqual(data["players"]["101"]["full_name"], "Test Player")
+        self.assertEqual(data["players"]["101"]["roster_id"], "1")
+        self.assertEqual(data["players"]["102"]["full_name"], "Waiver Player")
         self.assertEqual(data["state"]["week"], 1)
         self.assertEqual(len(data["matchups"]["1"]), 1)
         self.assertEqual(data["matchups"]["1"][0]["home"]["roster_id"], "1")
@@ -215,6 +222,32 @@ class ExporterTests(unittest.TestCase):
             weeks=1,
         )
         self.assertEqual(data["players"]["101"]["full_name"], "Roster Player")
+
+    def test_decision_context_lists_unrostered_espn_players_as_available(self):
+        data = {
+            "provider": "espn",
+            "league": {"league_id": "L1", "sport": "nfl", "season": "2026", "settings": {}},
+            "users": [{"user_id": "M1", "display_name": "Alex", "metadata": {"team_name": "Tests"}}],
+            "rosters": [{"roster_id": "1", "owner_id": "M1", "players": ["101"], "settings": {}}],
+            "players": {
+                "101": {"full_name": "Roster Player", "team": "10", "roster_id": "1", "fantasy_owner_id": "M1"},
+                "102": {"full_name": "Waiver Player", "team": "11", "active": True},
+            },
+            "state": {},
+        }
+        context = SleeperExporter._decision_context(data, None, None, 1)
+        self.assertEqual([player["full_name"] for player in context["available_players"]], ["Waiver Player"])
+
+    def test_espn_fetch_requests_current_player_pool(self):
+        provider = EspnProvider("2026")
+        responses = [
+            {"status": {"currentScoringPeriod": 3}, "teams": [], "members": []},
+            {"players": [{"player": {"id": 101, "fullName": "Available Player"}}]},
+        ]
+        with patch.object(provider, "_get", side_effect=responses) as get:
+            data = provider.fetch("L1", weeks=3)
+        self.assertIn("scoringPeriodId=3", get.call_args_list[1].args[0])
+        self.assertEqual(data["players"]["101"]["full_name"], "Available Player")
 
     def test_espn_provider_tolerates_list_shaped_optional_sections(self):
         provider = EspnProvider("2026")
