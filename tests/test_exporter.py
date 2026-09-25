@@ -223,6 +223,29 @@ class ExporterTests(unittest.TestCase):
         )
         self.assertEqual(data["players"]["101"]["full_name"], "Roster Player")
 
+    def test_espn_provider_adds_historical_starters_to_matchups(self):
+        provider = EspnProvider("2026")
+        data = provider._normalize(
+            "L1",
+            {"schedule": [{"matchupPeriodId": 1, "home": {"teamId": 1}, "away": {"teamId": 2}}]},
+            weeks=1,
+            historical_rosters=[{
+                "teams": [{
+                    "id": 1,
+                    "roster": {"entries": [
+                        {"lineupSlotId": 0, "playerPoolEntry": {"id": 101}},
+                        {"lineupSlotId": 20, "playerPoolEntry": {"id": 102}},
+                    ]},
+                }, {
+                    "id": 2,
+                    "roster": {"entries": [{"lineupSlotId": 2, "playerPoolEntry": {"id": 201}}]},
+                }],
+            }],
+        )
+        home = data["matchups"]["1"][0]["home"]
+        self.assertEqual(home["players"], ["101", "102"])
+        self.assertEqual(home["starters"], ["101"])
+
     def test_decision_context_lists_unrostered_espn_players_as_available(self):
         data = {
             "provider": "espn",
@@ -242,11 +265,14 @@ class ExporterTests(unittest.TestCase):
         provider = EspnProvider("2026")
         responses = [
             {"status": {"currentScoringPeriod": 3}, "teams": [], "members": []},
+            {"teams": []},
+            {"teams": []},
+            {"teams": []},
             {"players": [{"player": {"id": 101, "fullName": "Available Player"}}]},
         ]
         with patch.object(provider, "_get", side_effect=responses) as get:
             data = provider.fetch("L1", weeks=3)
-        self.assertIn("scoringPeriodId=3", get.call_args_list[1].args[0])
+        self.assertIn("scoringPeriodId=3", get.call_args_list[-1].args[0])
         self.assertEqual(data["players"]["101"]["full_name"], "Available Player")
 
     def test_espn_provider_tolerates_list_shaped_optional_sections(self):

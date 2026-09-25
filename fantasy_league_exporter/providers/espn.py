@@ -34,6 +34,17 @@ class EspnProvider:
         ])
         path = f"/apis/v3/games/ffl/seasons/{self.season}/segments/0/leagues/{league_id}?{params}"
         raw = self._get(path)
+        historical_rosters = []
+        requested_weeks = weeks or self._dict(raw.get("status")).get("currentMatchupPeriod") or 1
+        for week in range(1, requested_weeks + 1):
+            roster_path = (
+                f"/apis/v3/games/ffl/seasons/{self.season}/segments/0/leagues/{league_id}?"
+                f"{urlencode({'view': 'mRoster', 'scoringPeriodId': week})}"
+            )
+            try:
+                historical_rosters.append(self._get(roster_path))
+            except EspnApiError as exc:
+                self.errors.append({"endpoint": roster_path, "error": str(exc)})
         scoring_period = self._dict(raw.get("status")).get("currentScoringPeriod")
         if scoring_period is None:
             scoring_period = self._dict(raw.get("status")).get("currentMatchupPeriod")
@@ -47,7 +58,7 @@ class EspnProvider:
                 player_pool = self._get(player_path)
             except EspnApiError as exc:
                 self.errors.append({"endpoint": player_path, "error": str(exc)})
-        return self._normalize(league_id, raw, weeks, player_pool)
+        return self._normalize(league_id, raw, weeks, player_pool, historical_rosters)
 
     def _get(self, path: str):
         self.endpoints.append(path)
@@ -70,7 +81,7 @@ class EspnProvider:
                 ) from exc
             raise EspnApiError(f"GET {path}: {exc}") from exc
 
-    def _normalize(self, league_id: str, raw: dict, weeks: int | None, player_pool=None) -> dict:
+    def _normalize(self, league_id: str, raw: dict, weeks: int | None, player_pool=None, historical_rosters=None) -> dict:
         raw = self._dict(raw)
         teams = self._list(raw.get("teams"))
         members = {
@@ -127,22 +138,29 @@ class EspnProvider:
             "users": users,
             "rosters": rosters,
             "state": self._state(raw),
-            "players": self._players(raw, rosters, player_pool),
+            "players": self._players(raw, rosters, player_pool, historical_rosters),
             "traded_picks": [],
             "winners_bracket": [],
             "losers_bracket": [],
-            "matchups": self._matchups(raw, weeks),
+            "matchups": self._matchups(raw, weeks, historical_rosters),
             "transactions": {"all": self._list(self._dict(raw.get("transactions")).get("transactions"))},
-            "stats": self._stats(raw, weeks),
+            "stats": self._stats(raw, weeks, historical_rosters),
             "projections": {},
             "drafts": [raw.get("draftDetail")] if raw.get("draftDetail") else [],
             "weeks": weeks or 18,
         }
 
     @staticmethod
-    def _stats(raw: dict, weeks: int | None) -> dict:
+    def _stats(raw: dict, weeks: int | None, historical_rosters=None) -> dict:
         result = {}
-        for team in EspnProvider._list(raw.get("teams")):
+        sources = [raw] + [source for source in historical_rosters or [] if isinstance(source, dict)]
+        for source in sources:
+            for team in EspnProvider._list(source.get("teams")):
+                EspnProvider._collect_team_stats(result, team, weeks)
+        return result
+
+    @staticmethod
+    def _collect_team_stats(result: dict, team: dict, weeks: int | None) -> None:
             roster = EspnProvider._dict(team.get("roster")) if isinstance(team, dict) else {}
             for entry in EspnProvider._list(roster.get("entries")):
                 if not isinstance(entry, dict):
@@ -163,8 +181,6 @@ class EspnProvider:
                     points = stat.get("appliedTotal")
                     if isinstance(points, (int, float)):
                         result.setdefault(week, {})[player_id] = {"points": points}
-        return result
-
     @staticmethod
     def _state(raw: dict) -> dict:
         status = EspnProvider._dict(raw.get("status"))
@@ -180,19 +196,21 @@ class EspnProvider:
         }
 
     @staticmethod
-    def _players(raw: dict, rosters: list | None = None, player_pool=None) -> dict:
+    def _players(raw: dict, rosters: list | None = None, player_pool=None, historical_rosters=None) -> dict:
         players = {}
         entries = EspnProvider._list(player_pool)
         if isinstance(player_pool, dict):
             entries = EspnProvider._list(player_pool.get("players"))
         entries.extend(EspnProvider._list(raw.get("players")))
-        for team in EspnProvider._list(raw.get("teams")):
-            roster = EspnProvider._dict(team.get("roster"))
-            entries.extend(
-                {"player": EspnProvider._dict(item.get("playerPoolEntry")).get("player")}
-                for item in EspnProvider._list(roster.get("entries"))
-                if isinstance(item, dict)
-            )
+        sources = [raw] + [source for source in historical_rosters or [] if isinstance(source, dict)]
+        for source in sources:
+            for team in EspnProvider._list(source.get("teams")):
+                roster = EspnProvider._dict(team.get("roster"))
+                entries.extend(
+                    {"player": EspnProvider._dict(item.get("playerPoolEntry")).get("player")}
+                    for item in EspnProvider._list(roster.get("entries"))
+                    if isinstance(item, dict)
+                )
         ownership = {}
         for roster in rosters or []:
             for player_id in roster.get("players") or []:
@@ -224,9 +242,13 @@ class EspnProvider:
         return players
 
     @staticmethod
-    def _matchups(raw: dict, weeks: int | None) -> dict:
+    def _matchups(raw: dict, weeks: int | None, historical_rosters=None) -> dict:
         result = {}
         seen = set()
+        weekly_rosters = {
+            str(index): EspnProvider._rosters_for_period(source)
+            for index, source in enumerate(historical_rosters or [], 1)
+        }
         for matchup in EspnProvider._list(raw.get("schedule")):
             if not isinstance(matchup, dict):
                 continue
@@ -242,9 +264,11 @@ class EspnProvider:
                 side = EspnProvider._dict(matchup.get(side_name))
                 if side.get("teamId") is None:
                     continue
+                roster = weekly_rosters.get(week, {}).get(str(side["teamId"]), {})
                 sides.append({
                     "roster_id": str(side["teamId"]),
                     "points": side.get("totalPoints", 0),
+                    **roster,
                 })
             result.setdefault(week, []).append({
                 "matchup_id": matchup_id,
@@ -252,6 +276,27 @@ class EspnProvider:
                 "away": sides[1] if len(sides) > 1 else {},
             })
         return result
+
+    @staticmethod
+    def _rosters_for_period(raw: dict) -> dict:
+        rosters = {}
+        for team in EspnProvider._list(raw.get("teams")):
+            team_id = str(team.get("id"))
+            entries = [
+                entry
+                for entry in EspnProvider._list(EspnProvider._dict(team.get("roster")).get("entries"))
+                if isinstance(entry, dict)
+            ]
+            player_ids = [str(EspnProvider._dict(entry.get("playerPoolEntry")).get("id")) for entry in entries]
+            rosters[team_id] = {
+                "players": player_ids,
+                "starters": [
+                    player_id
+                    for player_id, entry in zip(player_ids, entries)
+                    if entry.get("lineupSlotId") not in {20, 21, 22, 23, 24, 25}
+                ],
+            }
+        return rosters
 
     @staticmethod
     def _dict(value) -> dict:
