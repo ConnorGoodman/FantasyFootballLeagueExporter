@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from statistics import median
@@ -488,11 +490,29 @@ class FantasyExporter:
 
     @staticmethod
     def _write_json(path: Path, value) -> None:
-        path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        FantasyExporter._write_text(
+            path, json.dumps(value, indent=2, sort_keys=True) + "\n"
+        )
 
     @staticmethod
     def _write_text(path: Path, value: str) -> None:
-        path.write_text(value, encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=path.parent,
+                prefix=f".{path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_file.write(value)
+                temporary_path = Path(temporary_file.name)
+            os.replace(temporary_path, path)
+        finally:
+            if temporary_path:
+                temporary_path.unlink(missing_ok=True)
 
 
 class SleeperExporter(FantasyExporter):
