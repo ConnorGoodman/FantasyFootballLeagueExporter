@@ -33,6 +33,7 @@ Put all league jobs in one `.fantasy-export.json` file and run them together:
       "my_team_label": "Sleeper Team",
       "median_bonus": true,
       "fantasypros": false,
+      "fantasycalc": true,
       "weeks": 18
     },
     {
@@ -122,6 +123,7 @@ my-league/
     league.json users.json rosters.json state.json players.json
     matchups.json transactions.json drafts.json
     fantasypros.json       # optional FantasyPros rankings, projections, injuries, and schedule
+    fantasycalc.json        # optional current FantasyCalc trade values
     traded_picks.json winners_bracket.json losers_bracket.json
     sync.json                # timestamps, provider, endpoints, and errors
     decision_context.json    # normalized inputs for lineup, waiver, and trade decisions
@@ -188,5 +190,7 @@ sleeper-export export LEAGUE_ID ./my-league --weeks 18 --enrichment-file .\enric
 The enrichment object is copied to `external_enrichment` in the decision context, preserving provider-specific fields without imposing a schema.
 
 Set `fantasypros` to `true` in a league configuration, or pass `--fantasypros` to a single export, to fetch public FantasyPros tables. The supplement works with both Sleeper and ESPN because it runs after provider normalization. It writes parsed tables to `data/fantasypros.json` and includes the same payload under `external_enrichment.fantasypros`. FantasyPros pages can change or reject automated requests; failures are recorded in `data/sync.json` and do not prevent the league export.
+
+Set `fantasycalc` to `true` in a league configuration, or pass `--fantasycalc` to a single export, to fetch current FantasyCalc trade values. For Sleeper leagues, the exporter derives PPR, team count, and 1QB/2QB format from the league settings. It writes the documented `/values/current` response to `data/fantasycalc.json` and includes it under `external_enrichment.fantasycalc`. The default format is dynasty and no TE premium; override any values with `fantasycalc_options`. FantasyCalc requests are cached by the service and should not be refreshed more than once every three hours. Follow FantasyCalc's terms of use and attribution requirements when displaying the values.
 
 Each export also writes a timestamped normalized context under `history/`. This preserves changes in rosters, records, player status, stats, projections, and external enrichment so an agent can identify trends across exports.

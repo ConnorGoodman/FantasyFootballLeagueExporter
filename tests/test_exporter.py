@@ -9,7 +9,7 @@ from unittest.mock import patch
 from fantasy_league_exporter import cli
 from fantasy_league_exporter.exporter import SleeperExporter
 from fantasy_league_exporter.providers.espn import EspnProvider
-from fantasy_league_exporter.supplements import FantasyProsSupplement
+from fantasy_league_exporter.supplements import FantasyCalcSupplement, FantasyProsSupplement
 
 
 class FakeClient:
@@ -102,6 +102,47 @@ class ExporterTests(unittest.TestCase):
         html = "<table><tr><th>Player</th><th>Rank</th></tr><tr><td>Test Player</td><td>12</td></tr></table>"
         tables = FantasyProsSupplement._tables(html)
         self.assertEqual(tables, [[{"Player": "Test Player", "Rank": "12"}]])
+
+    def test_fantasycalc_supplement_is_written_and_added_to_context(self):
+        exporter = SleeperExporter()
+        exporter.client = FakeClient()
+        supplement_data = {
+            "provider": "fantasycalc",
+            "parameters": FantasyCalcSupplement.DEFAULT_OPTIONS,
+            "values": [{"player": {"name": "Test Player"}, "value": 42}],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "fantasy_league_exporter.exporter.FantasyCalcSupplement"
+        ) as supplement_class:
+            supplement_class.return_value.fetch.return_value = supplement_data
+            supplement_class.return_value.endpoint_errors.return_value = []
+            exporter.export("L1", Path(temp_dir), weeks=1, fantasycalc=True)
+            root = Path(temp_dir)
+            self.assertEqual(
+                json.loads((root / "data" / "fantasycalc.json").read_text())["provider"],
+                "fantasycalc",
+            )
+            context = json.loads((root / "data" / "decision_context.json").read_text())
+            self.assertEqual(context["external_enrichment"]["fantasycalc"], supplement_data)
+
+    def test_fantasycalc_options_follow_sleeper_league_format(self):
+        options = SleeperExporter._fantasycalc_options({
+            "league": {
+                "settings": {"num_teams": 10},
+                "scoring_settings": {"rec": 0.5},
+                "roster_positions": ["QB", "RB", "WR", "SUPER_FLEX"],
+            },
+            "rosters": [{}] * 10,
+        })
+        self.assertEqual(options["ppr"], 0.5)
+        self.assertEqual(options["numQbs"], "2")
+        self.assertEqual(options["numTeams"], 10)
+
+        overridden = SleeperExporter._fantasycalc_options(
+            {"league": {"scoring_settings": {"rec": 0.5}, "roster_positions": ["QB"]}},
+            {"isDynasty": False, "numQbs": "1"},
+        )
+        self.assertFalse(overridden["isDynasty"])
 
     def test_decision_context_derives_weekly_median_results(self):
         data = {

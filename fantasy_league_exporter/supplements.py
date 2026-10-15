@@ -118,3 +118,56 @@ class FantasyProsSupplement:
 
     def endpoint_errors(self) -> list[dict[str, str]]:
         return list(self.errors)
+
+
+class FantasyCalcSupplement:
+    """Fetch current FantasyCalc trade values for a configured league format."""
+
+    name = "fantasycalc"
+    base_url = "https://api.fantasycalc.com"
+    DEFAULT_OPTIONS = {
+        "isDynasty": True,
+        "numQbs": "1",
+        "numTeams": 12,
+        "ppr": 1,
+        "tep": "none",
+    }
+
+    def __init__(self, timeout: int = 30, options: dict | None = None):
+        self.timeout = timeout
+        self.options = {**self.DEFAULT_OPTIONS, **(options or {})}
+        self.errors: list[dict[str, str]] = []
+
+    def fetch(self) -> dict:
+        from urllib.parse import urlencode
+
+        self.errors.clear()
+        query = urlencode(self.options)
+        url = f"{self.base_url}/values/current?{query}"
+        result = {
+            "provider": self.name,
+            "source": url,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "parameters": self.options,
+            "values": [],
+        }
+        try:
+            result["values"] = self._get_json(url)
+        except (HTTPError, URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            self.errors.append({"source": self.name, "url": url, "error": str(exc)})
+            result["errors"] = self.errors
+        return result
+
+    def _get_json(self, url: str):
+        request = Request(
+            url,
+            headers={
+                "User-Agent": "fantasy-league-exporter/0.2",
+                "Accept": "application/json",
+            },
+        )
+        with urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def endpoint_errors(self) -> list[dict[str, str]]:
+        return list(self.errors)

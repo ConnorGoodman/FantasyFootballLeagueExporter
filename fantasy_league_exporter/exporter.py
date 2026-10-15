@@ -9,7 +9,7 @@ from statistics import median
 
 from . import __version__
 from .providers.sleeper import SleeperApiError, SleeperClient, SleeperProvider
-from .supplements import FantasyProsSupplement
+from .supplements import FantasyCalcSupplement, FantasyProsSupplement
 
 
 class FantasyExporter:
@@ -37,6 +37,23 @@ class FantasyExporter:
             self.errors.append({"endpoint": path, "error": str(exc)})
             return default
 
+    @staticmethod
+    def _fantasycalc_options(data: dict, overrides: dict | None = None) -> dict:
+        league = data.get("league") or {}
+        settings = league.get("settings") or {}
+        scoring = league.get("scoring_settings") or {}
+        roster_positions = league.get("roster_positions") or []
+        num_qb_slots = sum(position == "QB" for position in roster_positions)
+        has_superflex = any(position.replace("_", "").upper() == "SUPERFLEX" for position in roster_positions)
+        num_teams = settings.get("num_teams") or league.get("total_rosters") or len(data.get("rosters") or [])
+        options = {
+            "ppr": scoring.get("rec", FantasyCalcSupplement.DEFAULT_OPTIONS["ppr"]),
+            "numQbs": "2" if num_qb_slots > 1 or has_superflex else "1",
+        }
+        if num_teams:
+            options["numTeams"] = num_teams
+        return {**options, **(overrides or {})}
+
     def export(
         self,
         league_id: str,
@@ -47,6 +64,8 @@ class FantasyExporter:
         enrichment: dict | None = None,
         median_bonus: bool = False,
         fantasypros: bool = False,
+        fantasycalc: bool = False,
+        fantasycalc_options: dict | None = None,
     ) -> dict:
         started = datetime.now(timezone.utc)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -71,11 +90,19 @@ class FantasyExporter:
             supplement = FantasyProsSupplement()
             data["fantasypros"] = supplement.fetch()
             supplement_errors = supplement.endpoint_errors()
+        if fantasycalc:
+            supplement = FantasyCalcSupplement(
+                options=self._fantasycalc_options(data, fantasycalc_options)
+            )
+            data["fantasycalc"] = supplement.fetch()
+            supplement_errors.extend(supplement.endpoint_errors())
 
         self._write_data(output_dir, data)
         enrichment = dict(enrichment or {})
         if fantasypros:
             enrichment["fantasypros"] = data["fantasypros"]
+        if fantasycalc:
+            enrichment["fantasycalc"] = data["fantasycalc"]
         context = self._decision_context(
             data, my_team_user_id, my_team_label, total_weeks, enrichment, median_bonus
         )
