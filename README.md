@@ -156,7 +156,24 @@ The mounted folder is the git repository. Configure the team once with the same 
 docker compose run --rm fantasy-export set-team /export --user-id PROVIDER_TEAM_ID --label "My Team"
 ```
 
-For automation, schedule `docker compose run --rm sleeper-export` from this repository. Commit and push the mounted export folder in the job after a successful export.
+For automation, schedule `docker compose run --rm fantasy-export` from this repository. Commit and push the mounted export folder in the job after a successful export.
+
+### GitOps home lab deployment
+
+The companion `homelab-gitops` repository runs `fantasy-export export-all /config` from a CronJob. Add `fantasycalc: true` to the appropriate league under `apps/fantasy-exporter/values.yaml`:
+
+```yaml
+exportConfig:
+  - name: "sleeper-league"
+    provider: "sleeper"
+    league_id: "SLEEPER_LEAGUE_ID"
+    folder: "/data/sleeper"
+    fantasycalc: true
+```
+
+The Helm chart renders `exportConfig` into `.fantasy-export.json`, so the CronJob passes the setting to `fantasy-export export-all` on its next run. No FantasyCalc credential or Kubernetes Secret is required. Sleeper exports derive the PPR, team count, and 1QB/2QB settings from the league; use `fantasycalc_options` in the same entry when the league format differs from the defaults. The resulting values are written to `data/fantasycalc.json` and `ai/context.json` through `external_enrichment.fantasycalc`.
+
+FantasyCalc requests are cached by the service and should not be refreshed more than once every three hours. Follow FantasyCalc's terms of use and attribution requirements when displaying the values.
 
 ### Publish the image automatically
 
